@@ -122,3 +122,9 @@ cython_debug/
 
 # VS Code
 .vscode/
+
+# Static files
+static/
+
+# Media files
+media/
