@@ -95,6 +95,12 @@ DATABASES = {
         "PASSWORD": os.getenv('DATABASE_PASSWORD'),
         "HOST": os.getenv('DATABASE_HOST'),
         "PORT": os.getenv('DATABASE_PORT'),
+        "OPTIONS": {
+            "sslmode": "require",
+            "sslrootcert": os.getenv('SSL_ROOT_CERT', ''),
+            "sslcert": os.getenv('SSL_CERT', ''),
+            "sslkey": os.getenv('SSL_KEY', ''),
+        } if not os.getenv("SSL_ENABLED") else {},
     }
 }
 
