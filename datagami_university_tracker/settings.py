@@ -97,9 +97,6 @@ DATABASES = {
         "PORT": os.getenv('DATABASE_PORT'),
         "OPTIONS": {
             "sslmode": "require",
-            "sslrootcert": os.getenv('SSL_ROOT_CERT', ''),
-            "sslcert": os.getenv('SSL_CERT', ''),
-            "sslkey": os.getenv('SSL_KEY', ''),
         } if not os.getenv("SSL_ENABLED") else {},
     }
 }
@@ -135,12 +132,23 @@ USE_I18N = True
 
 USE_TZ = True
 
+DEFAULT_FILE_STORAGE = 'core.azure_storage.AzureMediaStorage'
+STATICFILES_STORAGE = 'core.azure_storage.AzureStaticStorage'
+
+AZURE_ACCOUNT_NAME = os.getenv('AZURE_ACCOUNT_NAME')
+AZURE_ACCOUNT_KEY = os.getenv('AZURE_ACCOUNT_KEY')
+AZURE_CUSTOM_DOMAIN = f'{AZURE_ACCOUNT_NAME}.blob.core.windows.net'
+
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
-STATIC_URL = os.getenv('STATIC_URL', '/static/')
-STATIC_ROOT = BASE_DIR / os.getenv('STATIC_ROOT', 'static')
+STATIC_URL = f'https://{AZURE_CUSTOM_DOMAIN}/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+MEDIA_URL = f'https://{AZURE_CUSTOM_DOMAIN}/media/'
+MEDIA_ROOT = BASE_DIR / 'mediafiles'
+
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
@@ -149,24 +157,26 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = 'core.CustomUser'
 
-MEDIA_URL = os.getenv('MEDIA_URL', '/media/')
-MEDIA_ROOT = BASE_DIR / os.getenv('MEDIA_ROOT', 'media')
-
 
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'handlers': {
-        'file': {
+        'debug_file': {
+            'level': 'DEBUG',
+            'class': 'logging.FileHandler',
+            'filename': os.path.join(BASE_DIR, 'debug.log'),
+        },
+        'info_file': {
             'level': 'INFO',
             'class': 'logging.FileHandler',
-            'filename': './logfile.log',
+            'filename': os.path.join(BASE_DIR, 'info.log'),
         },
     },
     'loggers': {
         'django': {
-            'handlers': ['file'],
-            'level': 'INFO',
+            'handlers': ['debug_file', 'info_file'],
+            'level': 'DEBUG',
             'propagate': True,
         },
     },

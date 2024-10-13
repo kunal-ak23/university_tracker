@@ -1,11 +1,12 @@
 import logging
 
-from django.db import models, transaction
 from django.contrib.auth.models import AbstractUser
+from django.db import models, transaction
 from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
+from rest_framework.exceptions import ValidationError
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('django')
 
 class BaseModel(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
@@ -17,8 +18,10 @@ class BaseModel(models.Model):
 
     def save(self, *args, **kwargs):
         if self.pk:
-            self.version += 1
+            # Use F() to avoid concurrency issues
+            self.version = models.F('version') + 1
         super().save(*args, **kwargs)
+
 
 @receiver(pre_save)
 def log_model_changes(sender, instance, **kwargs):
@@ -37,6 +40,7 @@ def log_model_changes(sender, instance, **kwargs):
         if changes:
             logger.info(f'{sender.__name__} {instance.pk} changes: {"; ".join(changes)}')
 
+
 class OEM(BaseModel):
     name = models.CharField(max_length=255)
     website = models.URLField()
@@ -47,6 +51,10 @@ class OEM(BaseModel):
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        if self.poc and not (self.poc.is_provider_poc() or self.poc.is_superuser):
+            raise ValidationError("The POC must be either a 'university_poc' or a 'superuser'.")
 
 class Course(BaseModel):
     DURATION_UNIT_CHOICES = [
@@ -67,7 +75,8 @@ class Course(BaseModel):
         unique_together = ('name', 'provider')
 
     def __str__(self):
-        return self.name
+        return f'{self.name} (Code: {self.course_code}, OEM: {self.provider.name})'
+
 
 class University(BaseModel):
     name = models.CharField(max_length=255)
@@ -81,6 +90,10 @@ class University(BaseModel):
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        if self.poc and not (self.poc.is_university_poc() or self.poc.is_superuser):
+            raise ValidationError("The POC must be either a 'university_poc' or a 'superuser'.")
 
 class Stream(BaseModel):
     DURATION_UNIT_CHOICES = [
@@ -97,6 +110,7 @@ class Stream(BaseModel):
     def __str__(self):
         return f'{self.name} ({self.university.name})'
 
+
 class TaxRate(BaseModel):
     name = models.CharField(max_length=255)
     rate = models.DecimalField(max_digits=5, decimal_places=2)
@@ -105,6 +119,7 @@ class TaxRate(BaseModel):
     def __str__(self):
         return f'{self.name} ({self.rate}%)'
 
+
 class Contract(BaseModel):
     CONTRACT_STATUS_CHOICES = [
         ('active', 'Active'),
@@ -112,18 +127,30 @@ class Contract(BaseModel):
     ]
 
     name = models.CharField(max_length=100, unique=True)
-    stream = models.ForeignKey(Stream, on_delete=models.CASCADE, related_name='contracts')
+    streams = models.ManyToManyField(Stream, related_name='contracts')  # Updated to ManyToManyField
     cost_per_student = models.DecimalField(max_digits=12, decimal_places=2)
     tax_rate = models.ForeignKey(TaxRate, on_delete=models.SET_DEFAULT, default=0, related_name='contracts')
+    oem = models.ForeignKey(OEM, on_delete=models.CASCADE, related_name='contracts')  # Added OEM field
     oem_transfer_price = models.DecimalField(max_digits=12, decimal_places=2)
     start_date = models.DateField(null=True)
-    end_date = models.DateField(null=True)
+    end_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=CONTRACT_STATUS_CHOICES, default='active')
     courses = models.ManyToManyField(Course, through='ContractCourse', related_name='contracts')
     notes = models.TextField(blank=True, null=True)
 
     def __str__(self):
-        return f'Contract {self.name} for {self.stream.name}'
+        return f'Contract {self.name}'
+
+
+class ContractFile(BaseModel):
+    contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name='contract_files')
+    file_type = models.CharField(max_length=50)
+    uploaded_by = models.ForeignKey('CustomUser', on_delete=models.CASCADE)
+    file = models.FileField(upload_to='contracts/files/', null=False)
+    description = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f'File {self.file_type} for {self.contract.name}'
 
 class ContractCourse(BaseModel):
     contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name='contract_courses')
@@ -132,8 +159,10 @@ class ContractCourse(BaseModel):
     def __str__(self):
         return f'{self.course.name} for {self.contract.name}'
 
+
 class Batch(BaseModel):
     contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name='batches')
+    stream = models.ForeignKey(Stream, on_delete=models.CASCADE, related_name='batches')  # Added stream field
     name = models.CharField(max_length=255)
     start_year = models.PositiveIntegerField(help_text='Start Year')
     end_year = models.PositiveIntegerField(help_text='End Year')
@@ -147,8 +176,30 @@ class Batch(BaseModel):
     ], default='planned')
     notes = models.TextField(blank=True, null=True)
 
+    def clean(self):
+        # Validate that the stream is part of the contract's streams
+        if not self.contract.streams.filter(id=self.stream.id).exists():
+            raise ValidationError(f"The stream '{self.stream}' is not part of the contract '{self.contract}'.")
+
     def __str__(self):
         return f'Batch {self.name} ({self.start_year}-{self.end_year}) for {self.contract}'
+
+
+class BatchSnapshot(BaseModel):
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='oeiginal_batch')
+    number_of_students = models.PositiveIntegerField()
+    start_date = models.DateField(null=True)
+    end_date = models.DateField(null=True)
+    status = models.CharField(max_length=20, choices=[
+        ('planned', 'Planned'),
+        ('ongoing', 'Ongoing'),
+        ('completed', 'Completed'),
+    ], default='planned')
+    notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f'{self.batch.name} | students: {self.number_of_students}'
+
 
 class Billing(BaseModel):
     name = models.CharField(max_length=255)
@@ -157,42 +208,24 @@ class Billing(BaseModel):
     total_payments = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     balance_due = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     notes = models.TextField(blank=True, null=True)
+    batch_snapshots = models.ManyToManyField(BatchSnapshot, related_name='snapshots', blank=True)
 
     def __str__(self):
         if self.batches.exists():
             return f'Billing for {self.name}'
         return 'Billing (no batches assigned yet)'
 
+    def add_batch_snapshot(self, batch):
+        return BatchSnapshot.objects.create(
+            batch=batch,
+            number_of_students=batch.number_of_students,
+            start_date=batch.start_date,
+            end_date=batch.end_date,
+            status=batch.status,
+            notes=batch.notes
+        )
 
-import threading
 
-# Define a thread-local storage to keep track of the save state
-local_data = threading.local()
-
-@receiver(post_save, sender=Billing)
-def calculate_total_amount(sender, instance, **kwargs):
-    if getattr(local_data, 'in_signal', False):
-        return
-
-    local_data.in_signal = True
-    try:
-        logger.info('post_save signal called for Billing instance')
-
-        # Calculate total students in all batches
-        total_students = sum(batch.number_of_students for batch in instance.batches.all())
-        logger.info(total_students)
-
-        # Get the cost_per_student and tax_rate from the related contract
-        if instance.batches.exists():
-            contract = instance.batches.first().contract
-            cost_per_student = contract.cost_per_student
-            tax_rate = contract.tax_rate.rate / 100  # Convert percentage to decimal
-
-            # Calculate total amount
-            instance.total_amount = total_students * cost_per_student * (1 + tax_rate)
-            instance.save()
-    finally:
-        local_data.in_signal = False
 class Invoice(BaseModel):
     billing = models.ForeignKey(Billing, on_delete=models.CASCADE, related_name='invoices')
     issue_date = models.DateField()
@@ -211,11 +244,13 @@ class Invoice(BaseModel):
         is_new_invoice = self.pk is None
         previous_actual_invoice = None
 
+        # Check for previous actual invoice if this is an update
         if not is_new_invoice:
             previous_actual_invoice = Invoice.objects.get(pk=self.pk).actual_invoice
 
         super().save(*args, **kwargs)
 
+        # If the actual invoice is uploaded and the invoice is paid, create a payment record
         if self.actual_invoice and (is_new_invoice or not previous_actual_invoice) and self.status == 'paid':
             with transaction.atomic():
                 Payment.objects.create(
@@ -227,13 +262,15 @@ class Invoice(BaseModel):
                     status='paid',
                     notes='Payment created from actual invoice'
                 )
-                self.billing.total_payments = self.billing.payments.aggregate(total=models.Sum('amount'))[
-                                                  'total'] or 0.00
+                # Update the billing totals
+                self.billing.total_payments = self.billing.payments.aggregate(total=models.Sum('amount'))['total'] or 0.00
                 self.billing.balance_due = self.billing.total_amount - self.billing.total_payments
                 self.billing.save()
 
     def __str__(self):
         return f'Invoice {self.id} for {self.billing}'
+
+
 
 class Payment(BaseModel):
     billing = models.ForeignKey(Billing, on_delete=models.CASCADE, related_name='payments')
@@ -252,6 +289,8 @@ class Payment(BaseModel):
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
+
+        # Recalculate total payments and balance due on the related billing
         self.billing.total_payments = self.billing.payments.aggregate(total=models.Sum('amount'))['total'] or 0.00
         self.billing.balance_due = self.billing.total_amount - self.billing.total_payments
         self.billing.save()
@@ -259,28 +298,24 @@ class Payment(BaseModel):
     def __str__(self):
         return f'Payment {self.id} for {self.billing}'
 
-class ContractFile(BaseModel):
-    contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name='contract_files')
-    file_type = models.CharField(max_length=50)
-    uploaded_by = models.CharField(max_length=255)
-    description = models.TextField(blank=True, null=True)
-    file = models.FileField(upload_to='contracts/files/', blank=True, null=True)
-
-    def __str__(self):
-        return f'File {self.file_type} for {self.contract.name}'
-
 class CustomUser(AbstractUser):
     ROLE_CHOICES = [
-        ('admin', 'Admin'),
         ('provider_poc', 'Provider POC'),
         ('university_poc', 'University POC'),
     ]
+
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, blank=True, null=True)
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True)
-    provider = models.CharField(max_length=255, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
     date_of_birth = models.DateField(blank=True, null=True)
 
     def __str__(self):
         return self.username
+
+    # Add any custom methods for role-based actions or permissions here
+    def is_provider_poc(self):
+        return self.role == 'provider_poc'
+
+    def is_university_poc(self):
+        return self.role == 'university_poc'
