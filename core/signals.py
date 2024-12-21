@@ -8,6 +8,7 @@ from django.core.exceptions import ValidationError
 
 from core.logger_service import get_logger
 from core.models import ContractFile, Billing, Payment, Invoice, Contract
+from core.services import PaymentScheduleService
 
 logger = get_logger()
 
@@ -28,21 +29,25 @@ def calculate_total_amount(sender, instance, **kwargs):
             return
         updating_instance = True
         try:
-            total_students = 0
+            total_amount = 0
             # Clear previous batch_snapshots
             instance.batch_snapshots.clear()
+            
             for batch in instance.batches.all():
-                total_students += batch.number_of_students
+                # Get effective cost per student and tax rate for this batch
+                cost_per_student = batch.get_cost_per_student()
+                tax_rate = batch.get_tax_rate().rate / 100  # Convert percentage to decimal
+                
+                # Calculate amount for this batch
+                batch_amount = batch.number_of_students * cost_per_student * (1 + tax_rate)
+                total_amount += batch_amount
+                
+                # Create snapshot
                 instance.batch_snapshots.add(instance.add_batch_snapshot(batch))
 
             if instance.batches.exists():
-                contract = instance.batches.first().contract
-                cost_per_student = contract.cost_per_student
-                tax_rate = contract.tax_rate.rate / 100  # Convert percentage to decimal
-
-                # Calculate total amount based on the number of students and tax rate
-                instance.total_amount = total_students * cost_per_student * (1 + tax_rate)
-
+                instance.total_amount = total_amount
+                instance.balance_due = instance.total_amount - instance.total_payments
                 instance.save()
         finally:
             updating_instance = False
@@ -79,16 +84,52 @@ def handle_invoice_save(sender, instance, created, **kwargs):
 @receiver(pre_save, sender=Contract)
 def validate_courses_oem(sender, instance, **kwargs):
     if instance.pk:  # Ensure the instance is already saved
-        logger.info(f"Validating courses for Contract ID: {instance.pk}")
-        # filter duplicates and remove all courses that are not from the OEM
+        logger.info(f"Validating programs for Contract ID: {instance.pk}")
+        # filter duplicates and remove all programs that are not from the OEM
         logger.info(instance.oem)
-        for course in instance.courses.all():
-            logger.info(course.provider)
+        
+        filtered_programs = instance.programs.filter(provider=instance.oem).distinct()
+        if filtered_programs.count() != instance.programs.count():
+            logger.warning(f"Some programs do not belong to OEM {instance.oem.name} and will be removed.")
+            instance.programs.set(filtered_programs)
 
-        filtered_courses = instance.courses.filter(provider=instance.oem).distinct()
-        if filtered_courses.count() != instance.courses.count():
-            logger.warning(f"Some courses do not belong to OEM {instance.oem.name} and will be removed.")
-        instance.courses.clear()
-        instance.courses.set(filtered_courses)
-        logger.info(f"Validation complete for Contract ID: {instance.pk}")
+@receiver(post_save, sender=Payment)
+def handle_payment_status_change(sender, instance, created, **kwargs):
+    """Handle payment status changes and update related models"""
+    if instance.status == 'completed':
+        with transaction.atomic():
+            # Update invoice status
+            invoice = instance.invoice
+            invoice.refresh_from_db()  # Ensure we have the latest data
+            invoice.update_status()
+            invoice.save()
+
+            # Update billing totals
+            billing = instance.billing
+            billing.refresh_from_db()
+            completed_payments = billing.payments.filter(status='completed')
+            billing.total_payments = completed_payments.aggregate(
+                total=models.Sum('amount'))['total'] or 0.00
+            billing.balance_due = billing.total_amount - billing.total_payments
+            billing.save()
+
+@receiver(post_save, sender=Invoice)
+def create_payment_schedule(sender, instance, created, **kwargs):
+    """Create payment schedule when invoice is created"""
+    if created:
+        # Get recipients from the contract's POC and OEM contact
+        contract = instance.billing.batches.first().contract
+        recipients = [
+            contract.oem.contact_email,
+            contract.oem.poc.email if contract.oem.poc else None
+        ]
+        # Filter out None values and create comma-separated string
+        reminder_recipients = ','.join(filter(None, recipients))
+        
+        PaymentScheduleService.create_payment_schedule(
+            invoice=instance,
+            amount=instance.amount,
+            due_date=instance.due_date,
+            reminder_recipients=reminder_recipients
+        )
 

@@ -9,8 +9,8 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
 from .logger_service import get_logger
-from .models import Billing, Payment, OEM, Course, University, Stream, TaxRate, Contract, ContractCourse, Batch, \
-    Invoice, ContractFile, CustomUser
+from .models import Billing, Payment, OEM, Program, University, Stream, TaxRate, Contract, ContractProgram, Batch, \
+    Invoice, ContractFile, CustomUser, BatchSnapshot
 
 
 logger = get_logger()
@@ -81,11 +81,11 @@ class OEMAdmin(admin.ModelAdmin):
             return qs.filter(poc=request.user)
         return qs.none()
 
-@admin.register(Course)
-class CourseAdmin(admin.ModelAdmin):
+@admin.register(Program)
+class ProgramAdmin(admin.ModelAdmin):
     readonly_fields = ['created_at', 'updated_at', 'version']
-    list_display = ['id', 'name', 'course_code', 'provider', 'duration', 'duration_unit', 'created_at', 'updated_at']
-    search_fields = ['id', 'name', 'course_code', 'provider__name']
+    list_display = ['id', 'name', 'program_code', 'provider', 'duration', 'duration_unit', 'created_at', 'updated_at']
+    search_fields = ['id', 'name', 'program_code', 'provider__name']
     list_filter = ['duration_unit', 'created_at', 'updated_at']
 
     def get_queryset(self, request):
@@ -137,8 +137,8 @@ class ContractFileInline(admin.TabularInline):
     model = ContractFile
     extra = 0
 
-class ContractCourseInline(admin.TabularInline):
-    model = ContractCourse
+class ContractProgramInline(admin.TabularInline):
+    model = ContractProgram
     extra = 0
 
 @admin.register(Contract)
@@ -147,13 +147,13 @@ class ContractAdmin(admin.ModelAdmin):
     list_display = ['id', 'name', 'cost_per_student', 'tax_rate', 'oem_transfer_price', 'start_date', 'end_date', 'status', 'created_at', 'updated_at']
     search_fields = ['id', 'name', 'tax_rate__name']
     list_filter = ['status', 'created_at', 'updated_at']
-    inlines = [ContractFileInline, ContractCourseInline]
+    inlines = [ContractFileInline, ContractProgramInline]
 
-@admin.register(ContractCourse)
-class ContractCourseAdmin(admin.ModelAdmin):
+@admin.register(ContractProgram)
+class ContractProgramAdmin(admin.ModelAdmin):
     readonly_fields = ['created_at', 'updated_at', 'version']
-    list_display = ['id', 'contract', 'course', 'created_at', 'updated_at']
-    search_fields = ['id', 'contract__name', 'course__name']
+    list_display = ['id', 'contract', 'program', 'created_at', 'updated_at']
+    search_fields = ['id', 'contract__name', 'program__name']
     list_filter = ['created_at', 'updated_at']
 
 
@@ -180,22 +180,25 @@ def duplicate_batch(modeladmin, request, queryset):
     return HttpResponseRedirect(f'{url}?{query_string}')
 
 class BatchAdmin(admin.ModelAdmin):
-    list_display = ('name', 'contract', 'stream', 'start_year', 'end_year', 'status', 'duplicate_action')
-    actions = [duplicate_batch]
-    readonly_fields = ['created_at', 'updated_at', 'version']
-
-    def get_changeform_initial_data(self, request):
-        initial = super().get_changeform_initial_data(request)
-        initial.update(request.GET.dict())
-        return initial
-
-    def duplicate_action(self, obj):
-        return format_html(
-            '<a class="button" href="{}">Duplicate</a>',
-            reverse('admin:core_batch_add') + f'?contract={obj.contract.id}&stream={obj.stream.id}&name={obj.name}&start_year={obj.start_year + 1}&end_year={obj.end_year + 1}&number_of_students={obj.number_of_students}&start_date={obj.start_date}&end_date={obj.end_date}&status={obj.status}&notes={obj.notes}'
-        )
-    duplicate_action.short_description = 'Duplicate Batch'
-    duplicate_action.allow_tags = True
+    list_display = ['name', 'contract', 'stream', 'number_of_students', 'status']
+    search_fields = ['name', 'contract__name', 'stream__name']
+    list_filter = ['status', 'contract', 'stream']
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'contract', 'stream', 'number_of_students')
+        }),
+        ('Dates', {
+            'fields': ('start_year', 'end_year', 'start_date', 'end_date')
+        }),
+        ('Cost Overrides', {
+            'fields': ('cost_per_student_override', 'tax_rate_override', 'oem_transfer_price_override'),
+            'classes': ('collapse',),
+            'description': 'Override contract costs for this specific batch'
+        }),
+        ('Status', {
+            'fields': ('status', 'notes')
+        })
+    )
 
 admin.site.register(Batch, BatchAdmin)
 
@@ -222,3 +225,31 @@ class CustomUserAdmin(UserAdmin):
     list_display = ['username', 'email', 'role', 'is_active', 'is_staff', 'is_superuser']
     search_fields = ['username', 'email', 'role']
     list_filter = ['role', 'is_active', 'is_staff', 'is_superuser']
+
+@admin.register(BatchSnapshot)
+class BatchSnapshotAdmin(admin.ModelAdmin):
+    list_display = [
+        'batch', 
+        'number_of_students', 
+        'cost_per_student',
+        'tax_rate',
+        'oem_transfer_price',
+        'status',
+        'created_at'
+    ]
+    search_fields = ['batch__name']
+    list_filter = ['status', 'created_at']
+    readonly_fields = [
+        'batch',
+        'number_of_students',
+        'start_date',
+        'end_date',
+        'cost_per_student',
+        'tax_rate',
+        'oem_transfer_price',
+        'status',
+        'notes',
+        'created_at',
+        'updated_at',
+        'version'
+    ]

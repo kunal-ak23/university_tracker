@@ -1,4 +1,6 @@
 import logging
+from datetime import date
+from decimal import Decimal
 
 from django.contrib.auth.models import AbstractUser
 from django.db import models, transaction
@@ -18,8 +20,9 @@ class BaseModel(models.Model):
 
     def save(self, *args, **kwargs):
         if self.pk:
-            # Use F() to avoid concurrency issues
-            self.version = models.F('version') + 1
+            # Get current version and increment it
+            current = self.__class__.objects.get(pk=self.pk)
+            self.version = current.version + 1
         super().save(*args, **kwargs)
 
 
@@ -56,7 +59,12 @@ class OEM(BaseModel):
         if self.poc and not (self.poc.is_provider_poc() or self.poc.is_superuser):
             raise ValidationError("The POC must be either a 'university_poc' or a 'superuser'.")
 
-class Course(BaseModel):
+    def delete(self, *args, **kwargs):
+        if self.contracts.exists():
+            raise ValidationError("Cannot delete OEM as it has associated contracts. Please delete the contracts first.")
+        return super().delete(*args, **kwargs)
+
+class Program(BaseModel):
     DURATION_UNIT_CHOICES = [
         ('Days', 'Days'),
         ('Months', 'Months'),
@@ -64,8 +72,8 @@ class Course(BaseModel):
     ]
 
     name = models.CharField(max_length=255)
-    course_code = models.CharField(max_length=50, unique=True)
-    provider = models.ForeignKey(OEM, on_delete=models.CASCADE, related_name='courses', help_text="Name of the OEM")
+    program_code = models.CharField(max_length=50, unique=True)
+    provider = models.ForeignKey(OEM, on_delete=models.CASCADE, related_name='programs', help_text="Name of the OEM")
     duration = models.PositiveIntegerField(help_text='Duration')
     duration_unit = models.CharField(max_length=50, choices=DURATION_UNIT_CHOICES)
     description = models.TextField(blank=True, null=True)
@@ -75,7 +83,7 @@ class Course(BaseModel):
         unique_together = ('name', 'provider')
 
     def __str__(self):
-        return f'{self.name} (Code: {self.course_code}, OEM: {self.provider.name})'
+        return f'{self.name} (Code: {self.program_code}, OEM: {self.provider.name})'
 
 
 class University(BaseModel):
@@ -123,23 +131,26 @@ class TaxRate(BaseModel):
 class Contract(BaseModel):
     CONTRACT_STATUS_CHOICES = [
         ('active', 'Active'),
+        ('planned', 'Planned'),
         ('inactive', 'Inactive'),
+        ('archived', 'Archived'),
     ]
 
     name = models.CharField(max_length=100, unique=True)
-    streams = models.ManyToManyField(Stream, related_name='contracts')  # Updated to ManyToManyField
+    streams = models.ManyToManyField(Stream, related_name='contracts')
     cost_per_student = models.DecimalField(max_digits=12, decimal_places=2)
     tax_rate = models.ForeignKey(TaxRate, on_delete=models.SET_DEFAULT, default=0, related_name='contracts')
-    oem = models.ForeignKey(OEM, on_delete=models.CASCADE, related_name='contracts')  # Added OEM field
+    oem = models.ForeignKey(OEM, on_delete=models.CASCADE, related_name='contracts')
+    university = models.ForeignKey(University, on_delete=models.CASCADE, related_name='contracts')
     oem_transfer_price = models.DecimalField(max_digits=12, decimal_places=2)
     start_date = models.DateField(null=True)
     end_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=CONTRACT_STATUS_CHOICES, default='active')
-    courses = models.ManyToManyField(Course, through='ContractCourse', related_name='contracts')
+    programs = models.ManyToManyField(Program, through='ContractProgram', related_name='contracts')
     notes = models.TextField(blank=True, null=True)
 
     def __str__(self):
-        return f'Contract {self.name}'
+        return f'Contract {self.name} ({self.university.name} - {self.oem.name})'
 
 
 class ContractFile(BaseModel):
@@ -152,23 +163,48 @@ class ContractFile(BaseModel):
     def __str__(self):
         return f'File {self.file_type} for {self.contract.name}'
 
-class ContractCourse(BaseModel):
-    contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name='contract_courses')
-    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='contract_courses')
+class ContractProgram(BaseModel):
+    contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name='contract_programs')
+    program = models.ForeignKey(Program, on_delete=models.CASCADE)
+
+    class Meta:
+        unique_together = ('contract', 'program')
 
     def __str__(self):
-        return f'{self.course.name} for {self.contract.name}'
+        return f'{self.contract.name} - {self.program.name}'
 
 
 class Batch(BaseModel):
     contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name='batches')
-    stream = models.ForeignKey(Stream, on_delete=models.CASCADE, related_name='batches')  # Added stream field
+    stream = models.ForeignKey(Stream, on_delete=models.CASCADE, related_name='batches')
     name = models.CharField(max_length=255)
     start_year = models.PositiveIntegerField(help_text='Start Year')
     end_year = models.PositiveIntegerField(help_text='End Year')
     number_of_students = models.PositiveIntegerField()
     start_date = models.DateField(null=True)
     end_date = models.DateField(null=True)
+    cost_per_student_override = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Override contract's cost per student for this batch"
+    )
+    oem_transfer_price_override = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Override contract's OEM transfer price for this batch"
+    )
+    tax_rate_override = models.ForeignKey(
+        TaxRate, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='batch_overrides',
+        help_text="Override contract's tax rate for this batch"
+    )
     status = models.CharField(max_length=20, choices=[
         ('planned', 'Planned'),
         ('ongoing', 'Ongoing'),
@@ -181,49 +217,120 @@ class Batch(BaseModel):
         if not self.contract.streams.filter(id=self.stream.id).exists():
             raise ValidationError(f"The stream '{self.stream}' is not part of the contract '{self.contract}'.")
 
+    def get_cost_per_student(self):
+        """Returns the effective cost per student (override or contract's value)"""
+        return self.cost_per_student_override if self.cost_per_student_override is not None else self.contract.cost_per_student
+
+    def get_tax_rate(self):
+        """Returns the effective tax rate (override or contract's value)"""
+        return self.tax_rate_override if self.tax_rate_override is not None else self.contract.tax_rate
+
+    def get_oem_transfer_price(self):
+        """Returns the effective OEM transfer price (override or contract's value)"""
+        return self.oem_transfer_price_override if self.oem_transfer_price_override is not None else self.contract.oem_transfer_price
+
     def __str__(self):
         return f'Batch {self.name} ({self.start_year}-{self.end_year}) for {self.contract}'
 
 
 class BatchSnapshot(BaseModel):
-    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='oeiginal_batch')
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='original_batch')
     number_of_students = models.PositiveIntegerField()
     start_date = models.DateField(null=True)
     end_date = models.DateField(null=True)
+    cost_per_student = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2,
+        default=0.00,  # Add default value
+    )
+    tax_rate = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2,
+        default=0.00,  # Add default value
+    )
     status = models.CharField(max_length=20, choices=[
         ('planned', 'Planned'),
         ('ongoing', 'Ongoing'),
         ('completed', 'Completed'),
     ], default='planned')
     notes = models.TextField(blank=True, null=True)
+    oem_transfer_price = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2,
+        default=0.00,
+        help_text="OEM transfer price at the time of snapshot"
+    )
 
     def __str__(self):
-        return f'{self.batch.name} | students: {self.number_of_students}'
+        return (
+            f'Batch: {self.batch.name}\n'
+            f'Students: {self.number_of_students}\n'
+            f'Cost/Student: ₹{self.cost_per_student:,.2f}\n'
+            f'Tax Rate: {self.tax_rate}%\n'
+            f'OEM Price: ₹{self.oem_transfer_price:,.2f}'
+            f'\n\n'
+        )
 
 
 class Billing(BaseModel):
     name = models.CharField(max_length=255)
     batches = models.ManyToManyField(Batch, related_name='billings')
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
-    total_payments = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    total_payments = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        default=Decimal('0.00')
+    )
     balance_due = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     notes = models.TextField(blank=True, null=True)
     batch_snapshots = models.ManyToManyField(BatchSnapshot, related_name='snapshots', blank=True)
-
-    def __str__(self):
-        if self.batches.exists():
-            return f'Billing for {self.name}'
-        return 'Billing (no batches assigned yet)'
+    total_oem_transfer_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    
+    def calculate_totals(self):
+        """Calculate total amounts including OEM transfer price"""
+        total_amount = Decimal('0.00')
+        total_oem_transfer = Decimal('0.00')
+        total_payments = self.total_payments or Decimal('0.00')
+        
+        for batch_snapshot in self.batch_snapshots.all():
+            # Get the original batch to access OEM transfer price
+            batch = batch_snapshot.batch
+            students = Decimal(str(batch_snapshot.number_of_students))
+            
+            # Calculate student cost
+            student_cost = batch_snapshot.cost_per_student * students
+            tax_amount = student_cost * (batch_snapshot.tax_rate / Decimal('100.00'))
+            total_amount += student_cost + tax_amount
+            
+            # Calculate OEM transfer amount
+            oem_transfer_price = batch_snapshot.oem_transfer_price  # Use snapshot's stored value
+            total_oem_transfer += oem_transfer_price * students
+        
+        self.total_amount = total_amount
+        self.total_oem_transfer_amount = total_oem_transfer
+        self.balance_due = self.total_amount - total_payments
+        self.save()
 
     def add_batch_snapshot(self, batch):
-        return BatchSnapshot.objects.create(
+        snapshot = BatchSnapshot.objects.create(
             batch=batch,
             number_of_students=batch.number_of_students,
             start_date=batch.start_date,
             end_date=batch.end_date,
             status=batch.status,
+            cost_per_student=batch.get_cost_per_student(),
+            tax_rate=batch.get_tax_rate().rate,
+            oem_transfer_price=batch.get_oem_transfer_price(),
             notes=batch.notes
         )
+        self.batch_snapshots.add(snapshot)
+        self.calculate_totals()
+        return snapshot
+
+    def __str__(self):
+        if self.batches.exists():
+            return f'Billing for {self.name}'
+        return 'Billing (no batches assigned yet)'
 
 
 class Invoice(BaseModel):
@@ -231,6 +338,7 @@ class Invoice(BaseModel):
     issue_date = models.DateField()
     due_date = models.DateField()
     amount = models.DecimalField(max_digits=12, decimal_places=2)
+    amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     proforma_invoice = models.FileField(upload_to='invoices/proforma/', blank=True, null=True)
     actual_invoice = models.FileField(upload_to='invoices/actual/', blank=True, null=True)
     status = models.CharField(max_length=20, choices=[
@@ -240,32 +348,18 @@ class Invoice(BaseModel):
     ], default='unpaid')
     notes = models.TextField(blank=True, null=True)
 
+    def update_status(self):
+        """Update invoice status based on payments"""
+        if self.amount_paid >= self.amount:
+            self.status = 'paid'
+        elif self.amount_paid > 0:
+            self.status = 'partially_paid'
+        else:
+            self.status = 'unpaid'
+
     def save(self, *args, **kwargs):
-        is_new_invoice = self.pk is None
-        previous_actual_invoice = None
-
-        # Check for previous actual invoice if this is an update
-        if not is_new_invoice:
-            previous_actual_invoice = Invoice.objects.get(pk=self.pk).actual_invoice
-
+        self.update_status()
         super().save(*args, **kwargs)
-
-        # If the actual invoice is uploaded and the invoice is paid, create a payment record
-        if self.actual_invoice and (is_new_invoice or not previous_actual_invoice) and self.status == 'paid':
-            with transaction.atomic():
-                Payment.objects.create(
-                    billing=self.billing,
-                    amount=self.amount,
-                    payment_date=self.issue_date,
-                    invoice=self,
-                    payment_method='Invoice Payment',
-                    status='paid',
-                    notes='Payment created from actual invoice'
-                )
-                # Update the billing totals
-                self.billing.total_payments = self.billing.payments.aggregate(total=models.Sum('amount'))['total'] or 0.00
-                self.billing.balance_due = self.billing.total_amount - self.billing.total_payments
-                self.billing.save()
 
     def __str__(self):
         return f'Invoice {self.id} for {self.billing}'
@@ -279,24 +373,39 @@ class Payment(BaseModel):
     payment_date = models.DateField()
     payment_method = models.CharField(max_length=50)
     status = models.CharField(max_length=20, choices=[
-        ('unpaid', 'Unpaid'),
-        ('partially_paid', 'Partially Paid'),
-        ('paid', 'Paid'),
-    ], default='unpaid')
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ], default='pending')
     transaction_reference = models.CharField(max_length=255, blank=True, null=True)
     notes = models.TextField(blank=True, null=True)
     attachment = models.FileField(upload_to='payments/', blank=True, null=True)
 
-    def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)
+    def clean(self):
+        # Validate that payment amount doesn't exceed remaining invoice amount
+        if self.invoice:
+            remaining_amount = self.invoice.amount - self.invoice.amount_paid
+            if self.amount > remaining_amount:
+                raise ValidationError(f"Payment amount ({self.amount}) exceeds remaining invoice amount ({remaining_amount})")
 
-        # Recalculate total payments and balance due on the related billing
-        self.billing.total_payments = self.billing.payments.aggregate(total=models.Sum('amount'))['total'] or 0.00
-        self.billing.balance_due = self.billing.total_amount - self.billing.total_payments
-        self.billing.save()
+    def save(self, *args, **kwargs):
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            
+            if self.status == 'completed':
+                # Update invoice amount_paid
+                self.invoice.amount_paid = models.F('amount_paid') + self.amount
+                self.invoice.save()
+                
+                # Recalculate billing totals
+                self.billing.total_payments = self.billing.payments.filter(
+                    status='completed'
+                ).aggregate(total=models.Sum('amount'))['total'] or 0.00
+                self.billing.balance_due = self.billing.total_amount - self.billing.total_payments
+                self.billing.save()
 
     def __str__(self):
-        return f'Payment {self.id} for {self.billing}'
+        return f'Payment {self.id} for Invoice {self.invoice.id}'
 
 class CustomUser(AbstractUser):
     ROLE_CHOICES = [
@@ -319,3 +428,64 @@ class CustomUser(AbstractUser):
 
     def is_university_poc(self):
         return self.role == 'university_poc'
+
+class PaymentSchedule(BaseModel):
+    FREQUENCY_CHOICES = [
+        ('one_time', 'One Time'),
+        ('weekly', 'Weekly'),
+        ('monthly', 'Monthly'),
+        ('quarterly', 'Quarterly'),
+        ('yearly', 'Yearly'),
+    ]
+
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='payment_schedules')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    due_date = models.DateField()
+    frequency = models.CharField(max_length=20, choices=FREQUENCY_CHOICES)
+    reminder_days = models.PositiveIntegerField(
+        default=7,
+        help_text="Days before due date to send reminder"
+    )
+    reminder_recipients = models.TextField(
+        help_text="Comma-separated email addresses for reminders",
+        blank=True,
+        null=True
+    )
+    status = models.CharField(max_length=20, choices=[
+        ('pending', 'Pending'),
+        ('paid', 'Paid'),
+        ('overdue', 'Overdue'),
+    ], default='pending')
+    notes = models.TextField(blank=True, null=True)
+
+    def get_reminder_recipients(self):
+        """Returns list of reminder recipients"""
+        if not self.reminder_recipients:
+            # Fallback to OEM contact if no custom recipients
+            return [self.invoice.billing.batches.first().contract.oem.contact_email]
+        return [email.strip() for email in self.reminder_recipients.split(',') if email.strip()]
+
+    def __str__(self):
+        return f'Payment Schedule for Invoice {self.invoice.id} - Due: {self.due_date}'
+
+    def save(self, *args, **kwargs):
+        if self.due_date < date.today():
+            self.status = 'overdue'
+        super().save(*args, **kwargs)
+
+
+class PaymentReminder(BaseModel):
+    REMINDER_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('sent', 'Sent'),
+        ('failed', 'Failed'),
+    ]
+
+    payment_schedule = models.ForeignKey(PaymentSchedule, on_delete=models.CASCADE, related_name='reminders')
+    scheduled_date = models.DateField()
+    status = models.CharField(max_length=20, choices=REMINDER_STATUS_CHOICES, default='pending')
+    sent_at = models.DateTimeField(null=True, blank=True)
+    error_message = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f'Reminder for {self.payment_schedule} on {self.scheduled_date}'
