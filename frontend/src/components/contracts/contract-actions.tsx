@@ -43,6 +43,7 @@ export function ContractActions({ contractId, status }: ContractActionsProps) {
         description: `Failed to ${status === 'archived' ? 'activate' : 'archive'} contract`,
         variant: "destructive",
       })
+      console.error(error);
     }
   }
 
@@ -117,7 +118,8 @@ export function ContractActions({ contractId, status }: ContractActionsProps) {
               title: "Error",
               description: "Failed to delete contract",
               variant: "destructive",
-            })
+            });
+            console.error(error);
           }
         }}
         title="Delete Contract"

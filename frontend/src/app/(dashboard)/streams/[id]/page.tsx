@@ -1,31 +1,20 @@
-import { getStreamsByUniversity } from "@/lib/api/streams"
+import { getStream } from "@/lib/api/streams"
 import { getBatchesByStream } from "@/lib/api/batches"
 import Link from "next/link"
-import { notFound } from "next/navigation"
 import { Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Batch } from "@/types/batch"
 
-interface StreamPageProps {
-  params: {
-    id: string
-  }
-}
-
-export default async function StreamPage({ id }: {id: string}) {
+const StreamPage = async (params: {id: string}) => {
+  const { id } = params;
   let stream
-  let batches
+  let batches: Batch[] = []
 
   try {
-    const streams = await getStreamsByUniversity(Number(id))
-    stream = streams.find(s => s.id.toString() === id)
-    if (!stream) {
-      notFound()
-    }
-
-    batches = await getBatchesByStream(Number(id))
+    stream = await getStream(Number(id)); 
+    batches = (await getBatchesByStream(id)).results
   } catch (error) {
-    console.error(error)
-    notFound()
+    console.error(error);
   }
 
   return (
@@ -60,8 +49,8 @@ export default async function StreamPage({ id }: {id: string}) {
             </Link>
           </div>
           <div className="space-y-4">
-            {batches.map((batch) => (
-              <div key={batch.id} className="rounded-lg border p-4 space-y-2">
+            {batches.map((batch, index) => (
+              <div key={"batch" + index} className="rounded-lg border p-4 space-y-2">
                 <h4 className="font-semibold">{batch.name}</h4>
                 <p className="text-sm text-gray-600">
                   Students: {batch.number_of_students}
@@ -76,7 +65,7 @@ export default async function StreamPage({ id }: {id: string}) {
             ))}
             {batches.length === 0 && (
               <p className="text-center text-gray-600">
-                No batches found. Click "Manage Batches" to add some.
+                No batches found. Click &quot;Manage Batches&quot; to add some.
               </p>
             )}
           </div>
@@ -85,3 +74,5 @@ export default async function StreamPage({ id }: {id: string}) {
     </div>
   )
 } 
+
+export default StreamPage;

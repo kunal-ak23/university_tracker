@@ -15,8 +15,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { MultiSelect } from "@/components/ui/multi-select"
 import { getUniversities, getUniversityStreams } from "@/lib/api/universities"
 import { getOEMs, getOEMPrograms } from "@/lib/api/oems"
-import { getTaxRates } from "@/lib/api/tax"
+import { getTaxRates, TaxRate } from "@/lib/api/tax"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
+import { Contract } from "@/types/contract"
+import { University } from "@/types/university"
+import { OEM } from "@/types/oem"
 
 const contractFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -33,18 +36,6 @@ const contractFormSchema = z.object({
 })
 
 type ContractFormValues = z.infer<typeof contractFormSchema>
-
-interface University {
-  id: string
-  name: string
-  streams: Array<{ id: string; name: string }>
-}
-
-interface OEM {
-  id: string
-  name: string
-  programs: Array<{ id: string; name: string }>
-}
 
 interface ContractFormProps {
   mode?: 'create' | 'edit'
@@ -84,6 +75,8 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
 
   const form = useForm<ContractFormValues>({
     resolver: zodResolver(contractFormSchema),
+    mode: "all",
+    reValidateMode: "onChange",
     defaultValues: {
       name: contract?.name ?? "",
       university: contract?.university?.id?.toString() ?? "",
@@ -94,7 +87,7 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
       status: contract?.status ?? "planned",
       start_date: contract?.start_date ?? "",
       end_date: contract?.end_date ?? "",
-      programs: contract?.contract_programs?.map(cp => cp.program.id.toString()) ?? [],
+      programs: contract?.programs?.map(cp => cp.id.toString()) ?? [],
       streams: contract?.streams?.map(s => s.id.toString()) ?? [],
     },
   })
@@ -108,13 +101,13 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
           getOEMs(),
           getTaxRates()
         ])
-        setUniversities(universitiesData)
-        setOems(oemsData)
-        setTaxRates(taxRatesData)
-        form.setValue('tax_rate', taxRatesData[0].id.toString());
+        
+        setUniversities(universitiesData.results);
+        setOems(oemsData.results);
+        setTaxRates(taxRatesData.results)
 
         // Set default tax rate (rate 18)
-        const defaultTaxRate = taxRatesData.find(tax => tax.rate === 18)
+        const defaultTaxRate = taxRates.find(tax => tax.rate === 18)
         if (defaultTaxRate && !contract) {  // Only set default for new contracts
           form.setValue('tax_rate', defaultTaxRate.id.toString())
         }
@@ -130,17 +123,18 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
     async function initializeEditMode() {
       if (mode === 'edit' && contract) {
         try {
-          setSelectedPrograms(contract.contract_programs.map(cp => cp.program.id))
+          setSelectedPrograms(contract.programs.map(cp => cp.id.toString()));
           setSelectedStreams(contract.streams.map(s => s.id))
           
           if (contract.oem?.id) {
             const programs = await getOEMPrograms(contract.oem.id)
-            setAvailablePrograms(programs)
+            console.log('programs', programs);
+            setAvailablePrograms(programs.results)
           }
           
           if (contract.university?.id) {
             const streams = await getUniversityStreams(contract.university.id)
-            setAvailableStreams(streams)
+            setAvailableStreams(streams.results)
           }
         } catch (error) {
           console.error('Failed to initialize edit mode:', error)
@@ -177,7 +171,7 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
   const onOEMChange = async (oemId: string) => {
     try {
       const programs = await getOEMPrograms(oemId)
-      setAvailablePrograms(programs)
+      setAvailablePrograms(programs.results)
       setSelectedPrograms([])
       form.setValue('programs', [])
     } catch (error) {
@@ -204,7 +198,7 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
         const hasFormChanged = Object.entries(value).some(([key, val]) => {
           if (key === 'programs') {
             const currentPrograms = val as string[]
-            const originalPrograms = contract?.contract_programs?.map(cp => cp.program.id) || []
+            const originalPrograms = contract?.programs?.map(cp => cp.id.toString()) || []
             return !areArraysEqual(currentPrograms.sort(), originalPrograms.sort())
           }
           if (key === 'streams') {

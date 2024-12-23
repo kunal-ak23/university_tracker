@@ -8,7 +8,7 @@ from django_filters import rest_framework as filters
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.filters import OrderingFilter
+from rest_framework.filters import OrderingFilter, SearchFilter
 from core.logger_service import get_logger
 from django.db.models import Q
 
@@ -53,44 +53,53 @@ class OEMViewSet(viewsets.ModelViewSet):
     serializer_class = OEMSerializer
     permission_classes = [IsAuthenticatedAndReadOnly]
     pagination_class = StandardResultsSetPagination
-    filter_backends = [filters.DjangoFilterBackend, OrderingFilter]
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     ordering_fields = ['name', 'created_at', 'updated_at']
     ordering = ['name']  # default ordering
+    search_fields = ['name', 'website', 'contact_email', 'contact_phone', 'address']
 
 class ProgramViewSet(viewsets.ModelViewSet):
     queryset = Program.objects.all()
     serializer_class = ProgramSerializer
     permission_classes = [IsAuthenticatedAndReadOnly]
     pagination_class = StandardResultsSetPagination
-    filter_backends = [filters.DjangoFilterBackend, OrderingFilter]
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = ProgramFilter
     ordering_fields = ['name', 'program_code', 'created_at', 'updated_at']
     ordering = ['name']
+    search_fields = ['name', 'program_code', 'description', 'prerequisites', 'provider__name']
 
 class UniversityViewSet(viewsets.ModelViewSet):
     queryset = University.objects.all()
     serializer_class = UniversitySerializer
     permission_classes = [IsAuthenticatedAndReadOnly]
     pagination_class = StandardResultsSetPagination
-    filter_backends = [filters.DjangoFilterBackend, OrderingFilter]
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     ordering_fields = ['name', 'established_year', 'created_at', 'updated_at']
     ordering = ['name']
+    search_fields = ['name', 'website', 'contact_email', 'contact_phone', 'address', 'accreditation']
 
 class StreamViewSet(viewsets.ModelViewSet):
     queryset = Stream.objects.all()
     serializer_class = StreamSerializer
     permission_classes = [IsAuthenticatedAndReadOnly]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    ordering_fields = ['name', 'created_at', 'updated_at']
+    ordering = ['name']
+    search_fields = ['name', 'description', 'university__name']
 
 class ContractViewSet(viewsets.ModelViewSet):
     queryset = Contract.objects.all()
     serializer_class = ContractSerializer
     permission_classes = [IsAuthenticatedAndReadOnly]
     pagination_class = StandardResultsSetPagination
-    filter_backends = [filters.DjangoFilterBackend, OrderingFilter]
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = ContractFilter
     parser_classes = (MultiPartParser, FormParser)
     ordering_fields = ['name', 'status', 'start_date', 'end_date', 'created_at', 'updated_at']
     ordering = ['-created_at']  # newest first
+    search_fields = ['name', 'status', 'notes', 'oem__name', 'university__name']
 
     def create(self, request, *args, **kwargs):
         try:
@@ -245,11 +254,25 @@ class ContractProgramViewSet(viewsets.ModelViewSet):
     serializer_class = ContractProgramSerializer
     permission_classes = [IsAuthenticatedAndReadOnly]
 
+class BatchFilter(filters.FilterSet):
+    stream = filters.NumberFilter(field_name='stream__id')
+    contract = filters.NumberFilter(field_name='contract__id')
+    status = filters.CharFilter(field_name='status')
+    
+    class Meta:
+        model = Batch
+        fields = ['stream', 'contract', 'status']
+
 class BatchViewSet(viewsets.ModelViewSet):
     queryset = Batch.objects.all()
     serializer_class = BatchSerializer
     permission_classes = [IsAuthenticatedAndReadOnly]
     pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_class = BatchFilter
+    ordering_fields = ['name', 'start_year', 'end_year', 'created_at', 'updated_at']
+    ordering = ['-created_at']
+    search_fields = ['name', 'notes', 'contract__name', 'stream__name']
 
 class BillingViewSet(viewsets.ModelViewSet):
     queryset = Billing.objects.all()
@@ -277,7 +300,37 @@ class TaxRateViewSet(viewsets.ModelViewSet):
 
 class LoginView(TokenObtainPairView):
     permission_classes = [AllowAny]
-    serializer_class = CustomTokenObtainPairSerializer
+    
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            # Get user by email or username
+            lookup_field = request.data.get('email', request.data.get('username'))
+            if '@' in lookup_field:
+                user = CustomUser.objects.get(email=lookup_field)
+            else:
+                user = CustomUser.objects.get(username=lookup_field)
+            
+            # Determine role
+            if user.is_superuser:
+                role = 'admin'
+            elif user.role == 'university_poc':
+                role = 'university_poc'
+            elif user.role == 'provider_poc':
+                role = 'provider_poc'
+            else:
+                role = 'user'
+            
+            # Add role and user info to response
+            response.data['role'] = role
+            response.data['user'] = {
+                'id': user.id,
+                'email': user.email,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+            }
+        
+        return response
 
 class RegisterView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()

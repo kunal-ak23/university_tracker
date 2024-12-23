@@ -18,7 +18,7 @@ import { useState, useEffect } from "react"
 const oemFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   website: z.string().url("Must be a valid URL"),
-  contact_email: z.string().email("Must be a valid email").optional().or(z.literal("")),
+  contact_email: z.string().email("Must be a valid email"),
   contact_phone: z.string().optional().or(z.literal("")),
   address: z.string().optional().or(z.literal("")),
   poc: z.string().min(1, "Point of Contact is required"),
@@ -43,6 +43,7 @@ export function OEMForm({ mode = 'create', oem }: OEMFormProps) {
         const eligiblePOCs = await getEligiblePOCs('provider')
         setPocs(eligiblePOCs.results)
       } catch (error) {
+        console.error(error);
         toast({
           title: "Error",
           description: "Failed to load eligible POCs",
@@ -55,6 +56,8 @@ export function OEMForm({ mode = 'create', oem }: OEMFormProps) {
 
   const form = useForm<OEMFormValues>({
     resolver: zodResolver(oemFormSchema),
+    mode: "all",
+    reValidateMode: "onChange",
     defaultValues: {
       name: oem?.name ?? "",
       website: oem?.website ?? "",
@@ -65,7 +68,7 @@ export function OEMForm({ mode = 'create', oem }: OEMFormProps) {
     },
   })
 
-  const { isDirty, isValid } = form.formState
+  const { isDirty, isValid, errors } = form.formState
 
   async function onSubmit(data: OEMFormValues) {
     try {

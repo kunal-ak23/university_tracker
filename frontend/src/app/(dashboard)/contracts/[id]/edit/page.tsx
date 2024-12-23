@@ -1,18 +1,18 @@
-"use server"
-
 import { getContract } from "@/lib/api/contracts"
 import { notFound } from "next/navigation"
 import { ContractForm } from "@/components/forms/contract/contract-form"
 
-export default async function EditContractPage({
-  params,
-}: {
-  params: { id: string }
-}) {
+interface EditContractPageProps {
+  params: Promise<{
+    id: string
+  }>
+}
+
+export default async function EditContractPage({ params }: EditContractPageProps) {
+  const { id } = await params
   let contract
-  const id = {params};
   try {
-    contract = await getContract(id.toString());
+    contract = await getContract(id)
   } catch (error) {
     console.error(error)
     notFound()

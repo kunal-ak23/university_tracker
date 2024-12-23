@@ -1,14 +1,15 @@
 import { getUniversity } from "@/lib/api/universities"
 import { getStreamsByUniversity } from "@/lib/api/streams"
-import { Batch, getBatchesByStream } from "@/lib/api/batches"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ExternalLink, Plus, Users, Calendar, IndianRupee, ClipboardList } from "lucide-react"
 import { UniversityActions } from "@/components/universities/university-actions"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Stream } from "@/types/contract"
 import { University } from "@/types/university"
+import { Batch } from "@/types/batch"
+import { Stream } from "@/types/stream"
+import { getBatchesByStream } from "@/lib/api/batches"
 
 export default async function UniversityPage({
   params,
@@ -170,8 +171,8 @@ export default async function UniversityPage({
             </Link>
           </div>
           <div className="grid grid-cols-3 gap-4">
-            {streams.map((stream) => (
-              <div key={stream.id} className="rounded-lg border p-4 space-y-2">
+            {streams.map((stream, index) => (
+              <div key={"stream" + index} className="rounded-lg border p-4 space-y-2">
                 <h4 className="font-semibold">{stream.name}</h4>
                 <p className="text-sm text-gray-600">
                   Duration: {stream.duration} {stream.duration_unit}
@@ -188,7 +189,7 @@ export default async function UniversityPage({
             ))}
             {streams.length === 0 && (
               <p className="col-span-3 text-center text-gray-600">
-                No streams found. Click "Add Stream" to create one.
+                No streams found. Click &quot;Add Stream&quot; to create one.
               </p>
             )}
           </div>
@@ -199,8 +200,8 @@ export default async function UniversityPage({
             <h3 className="text-xl font-semibold">All Batches</h3>
           </div>
           <div className="grid grid-cols-3 gap-4">
-            {allBatches.map((batch) => (
-              <div key={batch.id} className="rounded-lg border p-4 space-y-3">
+            {allBatches.map((batch, index) => (
+              <div key={"batch" + index} className="rounded-lg border p-4 space-y-3">
                 <div className="flex justify-between items-start">
                   <h4 className="font-semibold">{batch.name}</h4>
                   <Badge className={getStatusColor(batch.status)}>
@@ -210,27 +211,32 @@ export default async function UniversityPage({
                 <p className="text-sm text-gray-600">
                   Stream: {batch.stream?.name}
                 </p>
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <Users className="h-4 w-4" />
-                  <span>{batch.number_of_students} Students</span>
-                </div>
-                <div className="text-sm text-gray-600">
-                  Duration: {batch.start_year} - {batch.end_year}
-                </div>
-                <div className="text-sm font-medium">
-                  Cost per Student: ₹{parseFloat(batch.effective_cost_per_student).toLocaleString('en-IN')}
-                  {batch.cost_per_student_override && ' (Override)'}
-                </div>
-                {batch.tax_rate_override && (
-                  <div className="text-sm text-gray-600">
-                    Tax Rate: {batch.tax_rate_override}% (Override)
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <Users className="h-4 w-4" />
+                    {batch.number_of_students} students
                   </div>
-                )}
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <Calendar className="h-4 w-4" />
+                    {batch.start_year} - {batch.end_year}
+                  </div>
+                  <div className="text-sm font-medium">
+                    Cost per Student: ₹{parseFloat(batch.effective_cost_per_student).toLocaleString('en-IN')}
+                    {batch.cost_per_student_override && ' (Override)'}
+                  </div>
+                </div>
                 {batch.notes && (
                   <p className="text-sm text-gray-600 line-clamp-2">
                     {batch.notes}
                   </p>
                 )}
+                <div className="pt-2">
+                  <Link href={`/batches/${batch.id}`}>
+                    <Button variant="outline" size="sm" className="w-full">
+                      View Details
+                    </Button>
+                  </Link>
+                </div>
               </div>
             ))}
             {allBatches.length === 0 && (

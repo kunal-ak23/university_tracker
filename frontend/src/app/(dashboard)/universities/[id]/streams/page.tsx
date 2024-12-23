@@ -4,9 +4,9 @@ import { useEffect, useState } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Plus, Users } from "lucide-react"
-import { Stream } from "@/types/contract"
 import { getStreamsByUniversity } from "@/lib/api/streams"
 import Link from "next/link"
+import { Stream } from "@/types/stream"
 
 
 export default function StreamsPage(params: {
@@ -19,8 +19,8 @@ export default function StreamsPage(params: {
   useEffect(() => {
     async function fetchStreams() {
       try {
-        const fetchedStreams = await getStreamsByUniversity(Number(id))
-        setStreams(fetchedStreams)
+        const fetchedStreams = await getStreamsByUniversity(id)
+        setStreams(fetchedStreams.results)
       } catch (error) {
         console.error('Failed to fetch streams:', error)
         toast({
@@ -56,7 +56,7 @@ export default function StreamsPage(params: {
               </div>
               <div className="flex gap-4">
                 <Link href={`/universities/${id}/streams/${stream.id}`}>
-                  <Button variant="outline">View Details</Button>
+                  <Button variant="outline">View Details {id} {stream.id}</Button>
                 </Link>
                 <Link href={`/streams/${stream.id}/batches`}>
                   <Button variant="outline">
@@ -76,7 +76,7 @@ export default function StreamsPage(params: {
         ))}
         {streams.length === 0 && (
           <p className="text-center text-gray-600">
-            No streams found. Click "Add Stream" to create one.
+            No streams found. Click &quot;Add Stream&quot; to create one.
           </p>
         )}
       </div>

@@ -2,7 +2,7 @@ import { auth } from "@/auth"
 import { redirect } from "next/navigation"
 import { LoginForm } from "@/components/forms/auth/login-form"
 
-export default async function LoginPage() {
+const LoginPage = async () => {
   const session = await auth();
   console.log(session);
 
@@ -26,3 +26,5 @@ export default async function LoginPage() {
     </div>
   )
 }
+
+export default LoginPage;

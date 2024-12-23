@@ -1,37 +1,49 @@
 "use client"
 
 import { useState } from "react"
-import { signIn } from "next-auth/react"
-import { useRouter } from "next/navigation"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { useForm } from "react-hook-form"
+import * as z from "zod"
 import { Button } from "@/components/ui/button"
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
+import { signIn } from "next-auth/react"
+
+const loginFormSchema = z.object({
+  username: z.string().email("Must be a valid email"),
+  password: z.string().min(1, "Password is required"),
+})
+
+type LoginFormValues = z.infer<typeof loginFormSchema>
 
 export function LoginForm() {
   const router = useRouter()
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState("")
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault()
+  const form = useForm<LoginFormValues>({
+    resolver: zodResolver(loginFormSchema),
+    mode: "all",
+    reValidateMode: "onChange",
+    defaultValues: {
+      username: "",
+      password: "",
+    },
+  })
+
+  async function onSubmit(data: LoginFormValues) {
     setIsLoading(true)
-    setError("")
     
     try {
-      const formData = new FormData(e.currentTarget)
-      const email = formData.get("username") as string
-      const password = formData.get("password") as string
-      
       const response = await signIn("credentials", {
-        username: email,
-        password: password,
+        username: data.username,
+        password: data.password,
         redirect: false,
       })
 
       if (response?.error) {
-        setError("Invalid credentials")
         toast({
           title: "Error",
           description: "Invalid credentials",
@@ -46,7 +58,6 @@ export function LoginForm() {
       }
     } catch (error) {
       console.error("Login error:", error)
-      setError("An unexpected error occurred")
       toast({
         title: "Error",
         description: "Something went wrong",
@@ -58,37 +69,40 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {error && (
-        <div className="text-red-500 text-sm">{error}</div>
-      )}
-      <div className="space-y-2">
-        <Label htmlFor="username">Email</Label>
-        <Input
-          id="username"
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <FormField
+          control={form.control}
           name="username"
-          type="email"
-          placeholder="Enter your email"
-          required
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Email</FormLabel>
+              <FormControl>
+                <Input type="email" placeholder="Enter your email" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
         />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="password">Password</Label>
-        <Input
-          id="password"
+
+        <FormField
+          control={form.control}
           name="password"
-          type="password"
-          placeholder="Enter your password"
-          required
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Password</FormLabel>
+              <FormControl>
+                <Input type="password" placeholder="Enter your password" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
         />
-      </div>
-      <Button
-        type="submit"
-        className="w-full"
-        disabled={isLoading}
-      >
-        {isLoading ? "Signing in..." : "Sign in"}
-      </Button>
-    </form>
+
+        <Button type="submit" className="w-full" disabled={isLoading}>
+          {isLoading ? "Signing in..." : "Sign in"}
+        </Button>
+      </form>
+    </Form>
   )
 } 

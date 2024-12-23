@@ -2,17 +2,11 @@ export interface University {
   id: string
   name: string
   website: string
-  established_year: number | undefined
-  accreditation?: string
-  contact_email?: string
-  contact_phone?: string
-  address?: string
-  location?: string
-  poc?: {
-    id: string
-    name: string
-    email: string
-  }
+  established_year: number
+  accreditation: string | null
+  contact_email: string | null
+  contact_phone: string | null
+  address: string | null
   created_at: string
   updated_at: string
 }

@@ -3,14 +3,15 @@ from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from .views import (
     OEMViewSet, ProgramViewSet, UniversityViewSet, ContractViewSet,
     ContractProgramViewSet, BatchViewSet, BillingViewSet, PaymentViewSet, 
-    ContractFileViewSet, RegisterView, UserProfileView, LoginView,
+    ContractFileViewSet, RegisterView, UserProfileView,
     StreamViewSet, TaxRateViewSet, UserViewSet
 )
+from .auth import CustomLoginView
 
 # Auth endpoints
 urlpatterns = [
     # Auth endpoints
-    path('auth/login/', LoginView.as_view(), name='token_obtain_pair'),
+    path('auth/login/', CustomLoginView.as_view(), name='token_obtain_pair'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('auth/verify/', TokenVerifyView.as_view(), name='token_verify'),
     path('auth/register/', RegisterView.as_view(), name='register'),

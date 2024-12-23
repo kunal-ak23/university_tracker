@@ -30,10 +30,11 @@ export default function UniversitiesPage() {
       const response = await getUniversities({ 
         page, 
         search,
-        ordering
+        ordering,
+        page_size: 10
       })
       setUniversities(response.results)
-      setTotalPages(Math.ceil(response.count / 20))
+      setTotalPages(Math.ceil(response.count / 10))
     } catch (error) {
       console.error('Failed to fetch universities:', error)
       toast({
@@ -50,8 +51,8 @@ export default function UniversitiesPage() {
     const ordering = sortColumn 
       ? `${sortDirection === 'desc' ? '-' : ''}${sortColumn}`
       : undefined
-    fetchUniversities(currentPage, searchQuery, ordering)
-  }, [currentPage, searchQuery, sortColumn, sortDirection, toast])
+    fetchUniversities(currentPage, searchQuery, ordering);
+  }, [currentPage, searchQuery, sortColumn, sortDirection])
 
   const handleSearch = (query: string) => {
     setSearchQuery(query)
@@ -68,7 +69,7 @@ export default function UniversitiesPage() {
     setCurrentPage(page)
   }
 
-  if (isLoading) {
+  if (isLoading && universities.length === 0) {
     return <div className="flex items-center justify-center h-24">Loading...</div>
   }
 

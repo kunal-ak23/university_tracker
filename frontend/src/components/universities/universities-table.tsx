@@ -1,6 +1,5 @@
 "use client"
 
-import { useState } from "react"
 import { University } from "@/types/university"
 import { DataTable } from "@/components/ui/data-table"
 import Link from "next/link"
@@ -9,6 +8,7 @@ import { Edit, Trash2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { deleteUniversity } from "@/lib/api/universities"
 import { useToast } from "@/hooks/use-toast"
+import { ColumnDef, Row } from "@tanstack/react-table"
 
 interface UniversitiesTableProps {
   universities: University[]
@@ -19,6 +19,8 @@ interface UniversitiesTableProps {
   onSort?: (column: string, direction: 'asc' | 'desc') => void
   sortColumn?: string
   sortDirection?: 'asc' | 'desc'
+  hasNextPage?: boolean
+  hasPreviousPage?: boolean
 }
 
 export function UniversitiesTable({ 
@@ -30,6 +32,8 @@ export function UniversitiesTable({
   onSort,
   sortColumn,
   sortDirection,
+  hasNextPage,
+  hasPreviousPage,
 }: UniversitiesTableProps) {
   const router = useRouter()
   const { toast } = useToast()
@@ -42,7 +46,8 @@ export function UniversitiesTable({
         description: "University deleted successfully",
       })
       router.refresh()
-    } catch (error) {
+    } catch (err) {
+      console.error(err);
       toast({
         title: "Error",
         description: "Failed to delete university",
@@ -51,29 +56,29 @@ export function UniversitiesTable({
     }
   }
 
-  const columns = [
+  const columns: ColumnDef<University, any>[] = [
     {
       id: "name",
       header: "Name",
-      sortable: true,
-      cell: ({ original }: { original: University }) => (
-        <Link href={`/universities/${original.id}`} className="hover:underline">
-          {original.name}
+      accessorFn: (row: University) => row.name,
+      cell: ({ row }: { row: Row<University> }) => (
+        <Link href={`/universities/${row.original.id}`} className="hover:underline">
+          {row.original.name}
         </Link>
       ),
     },
     {
       id: "location",
       header: "Location",
-      sortable: true,
-      cell: ({ original }: { original: University }) => original.location,
+      accessorFn: (row: University) => row.address,
+      cell: ({ row }: { row: Row<University> }) => row.original.address,
     },
     {
       id: "actions",
       header: "Actions",
-      cell: ({ original }: { original: University }) => (
+      cell: ({ row }: { row: Row<University> }) => (
         <div className="flex items-center gap-2">
-          <Link href={`/universities/${original.id}/edit`}>
+          <Link href={`/universities/${row.original.id}/edit`}>
             <Button variant="ghost" size="icon">
               <Edit className="h-4 w-4" />
             </Button>
@@ -81,7 +86,7 @@ export function UniversitiesTable({
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => handleDelete(original.id)}
+            onClick={() => handleDelete(row.original.id)}
           >
             <Trash2 className="h-4 w-4 text-destructive" />
           </Button>
@@ -91,17 +96,13 @@ export function UniversitiesTable({
   ]
 
   return (
-    <DataTable
+    <DataTable<University, any>
       data={universities}
       columns={columns}
-      currentPage={currentPage}
       pageCount={totalPages}
-      onPageChange={onPageChange}
-      onSearch={onSearch}
-      onSort={onSort}
-      sortColumn={sortColumn}
-      sortDirection={sortDirection}
       searchPlaceholder="Search universities..."
+      hasNextPage={hasNextPage}
+      hasPreviousPage={hasPreviousPage}
     />
   )
 }

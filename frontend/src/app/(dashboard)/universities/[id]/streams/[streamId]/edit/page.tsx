@@ -10,7 +10,8 @@ export default async function EditStreamPage(params:  {
     streamId: string
   }) {
   const {id, streamId} = params;
-  const streams = await getStreamsByUniversity(Number(id))
+  const streams = (await getStreamsByUniversity(id)).results;
+  
   const stream = streams.find(s => s.id.toString() === streamId)
 
   if (!stream) {

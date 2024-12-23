@@ -1,58 +1,75 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
-import { useToast } from "@/hooks/use-toast"
-import { Button } from "@/components/ui/button"
-import { Plus } from "lucide-react"
-import { Batch } from "@/lib/api/batches"
+import { useSearchParams } from "next/navigation"
 import { getBatches } from "@/lib/api/batches"
 import { BatchesTable } from "@/components/batches/batches-table"
+import { Button } from "@/components/ui/button"
+import { Plus } from "lucide-react"
+import Link from "next/link"
+import { Batch } from "@/types/batch"
 
 export default function BatchesPage() {
-  const router = useRouter()
-  const { toast } = useToast()
   const [batches, setBatches] = useState<Batch[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-
-  const fetchBatches = async () => {
-    try {
-      setIsLoading(true)
-      const fetchedBatches = (await getBatches()).results
-      setBatches(fetchedBatches)
-    } catch (error) {
-      console.error('Failed to fetch batches:', error)
-      toast({
-        title: "Error",
-        description: "Failed to load batches",
-        variant: "destructive",
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }
+  const [loading, setLoading] = useState(true)
+  const searchParams = useSearchParams()
 
   useEffect(() => {
-    fetchBatches()
-  }, [toast])
+    const fetchBatches = async () => {
+      try {
+        setLoading(true)
+        // Construct query string from search params
+        const queryParams = new URLSearchParams()
+        
+        // Add search parameter if exists
+        const search = searchParams.get('search')
+        if (search) {
+          queryParams.set('search', search)
+        }
 
-  if (isLoading) {
-    return <div className="flex items-center justify-center h-24">Loading...</div>
+        // Add ordering parameter if exists
+        const ordering = searchParams.get('ordering')
+        if (ordering) {
+          queryParams.set('ordering', ordering)
+        }
+
+        // Add page parameter if exists
+        const page = searchParams.get('page')
+        if (page) {
+          queryParams.set('page', page)
+        }
+
+        const queryString = queryParams.toString()
+        const url = queryString ? `/batches/?${queryString}` : '/batches/'
+        
+        const response = await getBatches(url)
+        setBatches(response.results || response)
+      } catch (error) {
+        console.error('Failed to fetch batches:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchBatches()
+  }, [searchParams]) // Re-fetch when search params change
+
+  if (loading) {
+    return <div>Loading...</div>
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-3xl font-bold tracking-tight">Batches</h2>
-        <Button onClick={() => router.push('/batches/new')}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Batch
-        </Button>
+        <Link href="/batches/new">
+          <Button>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Batch
+          </Button>
+        </Link>
       </div>
-      <BatchesTable 
-        batches={batches} 
-        onBatchDeleted={fetchBatches}
-      />
+      <BatchesTable batches={batches} />
     </div>
   )
 } 

@@ -1,56 +1,42 @@
 "use client"
 
-import { Batch } from "@/lib/api/batches"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { useToast } from "@/hooks/use-toast"
+import { DataTable } from "@/components/ui/data-table"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2 } from "lucide-react"
-import Link from "next/link"
-import { useState, useEffect } from "react"
-import { useToast } from "@/hooks/use-toast"
-import { useRouter } from "next/navigation"
-import { deleteBatch } from "@/lib/api/batches"
-import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import { Badge } from "@/components/ui/badge"
+import { formatDate } from "@/lib/utils"
+import { Batch } from "@/types/batch"
+import { ColumnDef, Row } from "@tanstack/react-table"
 
 interface BatchesTableProps {
   batches: Batch[]
-  onBatchDeleted: () => void
+  streamId?: string
+  currentPage?: number
+  totalPages?: number
+  onPageChange?: (page: number) => void
+  onSearch?: (query: string) => void
+  onSort?: (column: string, direction: 'asc' | 'desc') => void
+  sortColumn?: string
+  sortDirection?: 'asc' | 'desc'
+  hasNextPage?: boolean
+  hasPreviousPage?: boolean
 }
 
-export function BatchesTable({ batches, onBatchDeleted }: BatchesTableProps) {
-  const router = useRouter()
+export function BatchesTable({ 
+  batches,
+  currentPage,
+  totalPages,
+  onPageChange,
+  onSearch,
+  onSort,
+  sortColumn,
+  sortDirection,
+  hasNextPage,
+  hasPreviousPage,
+}: BatchesTableProps) {
   const { toast } = useToast()
-  const [localBatches, setLocalBatches] = useState<Batch[]>([])
-
-  useEffect(() => {
-    setLocalBatches(batches)
-  }, [batches])
-
-  const handleDelete = async (batchId: number) => {
-    try {
-      await deleteBatch(batchId.toString())
-      setLocalBatches(prevBatches => prevBatches.filter(batch => batch.id !== batchId))
-      onBatchDeleted()
-      toast({
-        title: "Success",
-        description: "Batch deleted successfully",
-      })
-    } catch (error) {
-      console.error('Failed to delete batch:', error)
-      toast({
-        title: "Error",
-        description: "Failed to delete batch",
-        variant: "destructive",
-      })
-    }
-  }
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -65,58 +51,75 @@ export function BatchesTable({ batches, onBatchDeleted }: BatchesTableProps) {
     }
   }
 
+  const columns: ColumnDef<Batch, any>[] = [
+    {
+      id: "name",
+      header: "Name",
+      accessorFn: (row: Batch) => row.name,
+      cell: ({ row }: { row: Row<Batch> }) => (
+        <Link href={`/batches/${row.original.id}`} className="hover:underline">
+          {row.original.name}
+        </Link>
+      ),
+    },
+    {
+      id: "start_date",
+      header: "Start Date",
+      accessorFn: (row: Batch) => row.start_date,
+      cell: ({ row }: { row: Row<Batch> }) => formatDate(row.original.start_date),
+    },
+    {
+      id: "end_date",
+      header: "End Date",
+      accessorFn: (row: Batch) => row.end_date,
+      cell: ({ row }: { row: Row<Batch> }) => formatDate(row.original.end_date),
+    },
+    {
+      id: "status",
+      header: "Status",
+      accessorFn: (row: Batch) => row.status,
+      cell: ({ row }: { row: Row<Batch> }) => (
+        <Badge className={getStatusColor(row.original.status)}>
+          {row.original.status.charAt(0).toUpperCase() + row.original.status.slice(1)}
+        </Badge>
+      ),
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: ({ row }: { row: Row<Batch> }) => (
+        <div className="flex items-center gap-2">
+          <Link href={`/batches/${row.original.id}/edit`}>
+            <Button variant="ghost" size="icon">
+              <Edit className="h-4 w-4" />
+            </Button>
+          </Link>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              toast({
+                title: "Error",
+                description: "Delete functionality is not implemented",
+                variant: "destructive",
+              })
+            }}
+          >
+            <Trash2 className="h-4 w-4 text-destructive" />
+          </Button>
+        </div>
+      ),
+    },
+  ]
+
   return (
-    <>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Stream</TableHead>
-            <TableHead>Students</TableHead>
-            <TableHead>Duration</TableHead>
-            <TableHead>Cost/Student</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {localBatches.map((batch) => (
-            <TableRow key={batch.id}>
-              <TableCell className="font-medium">{batch.name}</TableCell>
-              <TableCell>{batch.stream?.name}</TableCell>
-              <TableCell>{batch.number_of_students}</TableCell>
-              <TableCell>
-                {batch.start_year} - {batch.end_year}
-              </TableCell>
-              <TableCell>
-                ₹{parseFloat(batch.effective_cost_per_student).toLocaleString('en-IN')}
-                {batch.cost_per_student_override && ' (Override)'}
-              </TableCell>
-              <TableCell>
-                <Badge className={getStatusColor(batch.status)}>
-                  {batch.status.charAt(0).toUpperCase() + batch.status.slice(1)}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-right">
-                <div className="flex justify-end gap-2">
-                  <Link href={`/batches/${batch.id}/edit`}>
-                    <Button variant="ghost" size="icon">
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                  </Link>
-                  <Button 
-                    variant="ghost" 
-                    size="icon"
-                    onClick={() => handleDelete(batch.id)}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </>
+    <DataTable<Batch, any>
+      data={batches}
+      columns={columns}
+      pageCount={totalPages}
+      searchPlaceholder="Search batches..."
+      hasNextPage={hasNextPage}
+      hasPreviousPage={hasPreviousPage}
+    />
   )
 } 

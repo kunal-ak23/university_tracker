@@ -175,7 +175,7 @@ export default async function ViewUniversityPage(params:{
             ))}
             {streams.length === 0 && (
               <p className="col-span-3 text-center text-gray-600">
-                No streams found. Click "Add Stream" to create one.
+                No streams found. Click  &quot;Add Stream&quot; to create one.
               </p>
             )}
           </div>

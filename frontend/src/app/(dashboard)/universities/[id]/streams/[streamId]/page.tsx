@@ -5,12 +5,12 @@ import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Plus, Users } from "lucide-react"
-import { Stream } from "@/types/contract"
-import { Batch } from "@/lib/api/batches"
-import { getStreamsByUniversity } from "@/lib/api/streams"
+import { getStream } from "@/lib/api/streams"
 import { getBatchesByStream } from "@/lib/api/batches"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
+import { Stream } from "@/types/stream"
+import { Batch } from "@/types/batch"
 
 export default function StreamDetailPage({
   params,
@@ -28,16 +28,10 @@ export default function StreamDetailPage({
     async function fetchData() {
       try {
         setIsLoading(true)
-        const streams = await getStreamsByUniversity(Number(id))
-        const currentStream = streams.find(s => s.id.toString() === streamId)
-        
-        if (!currentStream) {
-          router.push(`/universities/${id}/streams`)
-          return
-        }
+        const currentStream = await getStream(Number(streamId));
         setStream(currentStream)
 
-        const fetchedBatches = await getBatchesByStream(Number(streamId))
+        const fetchedBatches = (await getBatchesByStream(streamId)).results;
         setBatches(fetchedBatches)
       } catch (error) {
         console.error('Failed to fetch stream data:', error)
@@ -179,7 +173,7 @@ export default function StreamDetailPage({
           ))}
           {batches.length === 0 && (
             <p className="col-span-3 text-center text-gray-600">
-              No batches found. Click "Add Batch" to create one.
+              No batches found. Click &quot;Add Batch&quot; to create one.
             </p>
           )}
         </div>

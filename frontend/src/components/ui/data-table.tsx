@@ -1,174 +1,160 @@
 "use client"
 
-import { useState } from "react"
+import * as React from "react"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { Input } from "@/components/ui/input"
+  ColumnDef,
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  getPaginationRowModel,
+  getFilteredRowModel,
+  ColumnFiltersState,
+  Row,
+} from "@tanstack/react-table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { Input } from "@/components/ui/input"
 
-interface DataTableProps<T> {
-  data: T[]
-  columns: {
-    id: string
-    header: string
-    cell: (row: { original: T }) => React.ReactNode
-    sortable?: boolean
-  }[]
-  pageCount?: number
-  currentPage?: number
-  onPageChange?: (page: number) => void
+interface DataTableProps<TData, TValue> {
+  columns: ColumnDef<TData, TValue>[]
+  data: TData[]
   searchPlaceholder?: string
-  onSearch?: (query: string) => void
-  onSort?: (column: string, direction: 'asc' | 'desc') => void
-  sortColumn?: string
-  sortDirection?: 'asc' | 'desc'
+  pageCount?: number
+  hasNextPage?: boolean
+  hasPreviousPage?: boolean
+  onPageChange?: (page: number) => void
+  currentPage?: number
+  totalCount?: number
+  pageSize?: number
 }
 
-export function DataTable<T>({
-  data,
+export function DataTable<TData, TValue>({
   columns,
-  pageCount = 1,
-  currentPage = 1,
-  onPageChange,
+  data,
   searchPlaceholder = "Search...",
-  onSearch,
-  onSort,
-  sortColumn,
-  sortDirection,
-}: DataTableProps<T>) {
-  const [searchDebounce, setSearchDebounce] = useState<NodeJS.Timeout>()
+  pageCount = 1,
+  hasNextPage = false,
+  hasPreviousPage = false,
+  onPageChange,
+  currentPage = 1,
+  totalCount = 0,
+  pageSize = 25,
+}: DataTableProps<TData, TValue>) {
+  const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
 
-  const handleSearch = (value: string) => {
-    if (searchDebounce) clearTimeout(searchDebounce)
-    setSearchDebounce(
-      setTimeout(() => {
-        onSearch?.(value)
-      }, 300)
-    )
-  }
+  const startRecord = totalCount === 0 ? 0 : ((currentPage - 1) * pageSize) + 1;
+  const endRecord = totalCount === 0 ? 0 : Math.min(currentPage * pageSize, totalCount);
 
-  const handleSort = (columnId: string) => {
-    if (!onSort) return
-
-    const newDirection = 
-      sortColumn === columnId && sortDirection === 'asc' ? 'desc' : 'asc'
-    onSort(columnId, newDirection)
-  }
-
-  const getSortIcon = (columnId: string) => {
-    if (sortColumn !== columnId) return <ArrowUpDown className="h-4 w-4" />
-    return sortDirection === 'asc' ? 
-      <ArrowUp className="h-4 w-4" /> : 
-      <ArrowDown className="h-4 w-4" />
-  }
+  const table = useReactTable({
+    data,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    onColumnFiltersChange: setColumnFilters,
+    pageCount: pageCount,
+    manualPagination: true,
+    state: {
+      columnFilters,
+      pagination: {
+        pageIndex: currentPage - 1,
+        pageSize: pageSize,
+      },
+    },
+  })
 
   return (
-    <div className="space-y-4">
-      {onSearch && (
-        <div className="flex items-center justify-between">
+    <div>
+      <div className="flex items-center justify-between py-4">
+        <div className="flex items-center gap-4">
           <Input
             placeholder={searchPlaceholder}
+            value={(table.getColumn("name")?.getFilterValue() as string) ?? ""}
+            onChange={(event) =>
+              table.getColumn("name")?.setFilterValue(event.target.value)
+            }
             className="max-w-sm"
-            onChange={(e) => handleSearch(e.target.value)}
           />
-        </div>
-      )}
-
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              {columns.map((column) => (
-                <TableHead key={column.id}>
-                  <div className="flex items-center space-x-2">
-                    <span>{column.header}</span>
-                    {column.sortable && onSort && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => handleSort(column.id)}
-                      >
-                        {getSortIcon(column.id)}
-                      </Button>
-                    )}
-                  </div>
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  className="h-24 text-center"
-                >
-                  No results found.
-                </TableCell>
-              </TableRow>
+          <div className="flex flex-col text-sm">
+            {totalCount > 0 ? (
+              <>
+                <span className="text-muted-foreground">
+                  Showing <span className="font-medium text-foreground">{startRecord}</span> to{" "}
+                  <span className="font-medium text-foreground">{endRecord}</span> of{" "}
+                  <span className="font-medium text-foreground">{totalCount}</span> records
+                </span>
+              </>
             ) : (
-              data.map((row, i) => (
-                <TableRow key={i}>
-                  {columns.map((column) => (
-                    <TableCell key={column.id}>
-                      {column.cell({ original: row })}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
+              <span className="text-muted-foreground">No records found</span>
             )}
-          </TableBody>
-        </Table>
-      </div>
-
-      {pageCount > 1 && (
-        <div className="flex items-center justify-end space-x-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onPageChange?.(1)}
-            disabled={currentPage === 1}
-          >
-            <ChevronsLeft className="h-4 w-4" />
-          </Button>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
           <Button
             variant="outline"
             size="sm"
             onClick={() => onPageChange?.(currentPage - 1)}
-            disabled={currentPage === 1}
+            disabled={!hasPreviousPage}
           >
-            <ChevronLeft className="h-4 w-4" />
+            Previous
           </Button>
-          <span className="text-sm">
-            Page {currentPage} of {pageCount}
-          </span>
+          <div className="text-sm font-medium">
+            Page {currentPage} of {pageCount || 1}
+          </div>
           <Button
             variant="outline"
             size="sm"
             onClick={() => onPageChange?.(currentPage + 1)}
-            disabled={currentPage === pageCount}
+            disabled={!hasNextPage}
           >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onPageChange?.(pageCount)}
-            disabled={currentPage === pageCount}
-          >
-            <ChevronsRight className="h-4 w-4" />
+            Next
           </Button>
         </div>
-      )}
+      </div>
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <TableRow key={headerGroup.id}>
+                {headerGroup.headers.map((header) => {
+                  return (
+                    <TableHead key={header.id}>
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(
+                            header.column.columnDef.header,
+                            header.getContext()
+                          )}
+                    </TableHead>
+                  )
+                })}
+              </TableRow>
+            ))}
+          </TableHeader>
+          <TableBody>
+            {table.getRowModel().rows?.length ? (
+              table.getRowModel().rows.map((row) => (
+                <TableRow
+                  key={row.id}
+                  data-state={row.getIsSelected() && "selected"}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={columns.length} className="h-24 text-center">
+                  No results.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   )
 } 

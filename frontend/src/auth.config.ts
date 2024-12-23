@@ -52,11 +52,13 @@ export const authConfig = {
     
               // Return user object on successful auth
               const user = {
-                id: credentials.username,
-                name: credentials.username,
-                email: credentials.username,
+                id: data.user.id,
+                name: `${data.user.first_name} ${data.user.last_name}`.trim() || data.user.email,
+                email: data.user.email,
+                role: data.role,
                 accessToken: data.access,
                 refreshToken: data.refresh,
+                ...data.user
               };
     
               console.log("Auth successful, returning user:", { ...user, accessToken: "[REDACTED]" });
@@ -78,7 +80,10 @@ export const authConfig = {
               ...token,
               accessToken: user.accessToken,
               refreshToken: user.refreshToken,
-              username: user.name,
+              role: user.role,
+              id: user.id,
+              first_name: user.first_name,
+              last_name: user.last_name,
               email: user.email,
               name: user.name,
             };
@@ -93,10 +98,14 @@ export const authConfig = {
           // Make sure user information is passed to the session
           session.user = {
             ...session.user,
+            id: token.id,
+            role: token.role,
+            first_name: token.first_name,
+            last_name: token.last_name,
             name: token.name,
             email: token.email,
           };
-          
+
           return session;
         },
       },

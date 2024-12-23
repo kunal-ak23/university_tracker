@@ -3,82 +3,138 @@
 import { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useRouter } from "next/navigation";
+import { zodResolver } from "@hookform/resolvers/zod"
+import { useForm } from "react-hook-form"
+import * as z from "zod"
+import { Button } from "@/components/ui/button"
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
+import { Input } from "@/components/ui/input"
+import { useToast } from "@/hooks/use-toast"
+
+const registerFormSchema = z.object({
+  username: z.string().min(1, "Username is required"),
+  email: z.string().email("Must be a valid email"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  password2: z.string(),
+  phone_number: z.string().min(1, "Phone number is required"),
+  role: z.literal("university_poc")
+}).refine((data) => data.password === data.password2, {
+  message: "Passwords don't match",
+  path: ["password2"],
+});
+
+type RegisterFormValues = z.infer<typeof registerFormSchema>
 
 export function RegisterForm() {
-  const [formData, setFormData] = useState({
-    username: "",
-    email: "",
-    password: "",
-    password2: "",
-    role: "university_poc",
-    phone_number: "",
-  });
-  const [error, setError] = useState("");
-  const { register } = useAuth();
   const router = useRouter();
+  const { register } = useAuth();
+  const { toast } = useToast();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const form = useForm<RegisterFormValues>({
+    resolver: zodResolver(registerFormSchema),
+    mode: "all",
+    reValidateMode: "onChange",
+    defaultValues: {
+      username: "",
+      email: "",
+      password: "",
+      password2: "",
+      phone_number: "",
+      role: "university_poc"
+    },
+  })
+
+  async function onSubmit(data: RegisterFormValues) {
     try {
-      await register(formData);
+      await register(data);
       router.push("/auth/login");
     } catch (error) {
       console.error(error)
-      setError("Registration failed");
+      toast({
+        title: "Error",
+        description: "Registration failed",
+        variant: "destructive",
+      })
     }
-  };
+  }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <input
-          type="text"
-          placeholder="Username"
-          value={formData.username}
-          onChange={(e) => setFormData({...formData, username: e.target.value})}
-          className="w-full p-2 border rounded"
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <FormField
+          control={form.control}
+          name="username"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Username</FormLabel>
+              <FormControl>
+                <Input placeholder="Enter username" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
         />
-      </div>
-      <div>
-        <input
-          type="email"
-          placeholder="Email"
-          value={formData.email}
-          onChange={(e) => setFormData({...formData, email: e.target.value})}
-          className="w-full p-2 border rounded"
+
+        <FormField
+          control={form.control}
+          name="email"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Email</FormLabel>
+              <FormControl>
+                <Input type="email" placeholder="Enter email" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
         />
-      </div>
-      <div>
-        <input
-          type="password"
-          placeholder="Password"
-          value={formData.password}
-          onChange={(e) => setFormData({...formData, password: e.target.value})}
-          className="w-full p-2 border rounded"
+
+        <FormField
+          control={form.control}
+          name="password"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Password</FormLabel>
+              <FormControl>
+                <Input type="password" placeholder="Enter password" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
         />
-      </div>
-      <div>
-        <input
-          type="password"
-          placeholder="Confirm Password"
-          value={formData.password2}
-          onChange={(e) => setFormData({...formData, password2: e.target.value})}
-          className="w-full p-2 border rounded"
+
+        <FormField
+          control={form.control}
+          name="password2"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Confirm Password</FormLabel>
+              <FormControl>
+                <Input type="password" placeholder="Confirm password" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
         />
-      </div>
-      <div>
-        <input
-          type="tel"
-          placeholder="Phone Number"
-          value={formData.phone_number}
-          onChange={(e) => setFormData({...formData, phone_number: e.target.value})}
-          className="w-full p-2 border rounded"
+
+        <FormField
+          control={form.control}
+          name="phone_number"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Phone Number</FormLabel>
+              <FormControl>
+                <Input type="tel" placeholder="+1234567890" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
         />
-      </div>
-      {error && <div className="text-red-500">{error}</div>}
-      <button type="submit" className="w-full bg-blue-500 text-white p-2 rounded">
-        Register
-      </button>
-    </form>
-  );
+
+        <Button type="submit" className="w-full">
+          Register
+        </Button>
+      </form>
+    </Form>
+  )
 } 

@@ -128,6 +128,12 @@ class BatchSerializer(serializers.ModelSerializer):
         read_only=True,
         source='get_tax_rate.rate'
     )
+    effective_oem_transfer_price = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+        source='get_oem_transfer_price'
+    )
 
     class Meta:
         model = Batch
@@ -135,7 +141,8 @@ class BatchSerializer(serializers.ModelSerializer):
             'id', 'name', 'contract', 'stream', 'number_of_students',
             'start_year', 'end_year', 'start_date', 'end_date',
             'cost_per_student_override', 'tax_rate_override',
-            'effective_cost_per_student', 'effective_tax_rate',
+            'oem_transfer_price_override', 'effective_cost_per_student',
+            'effective_tax_rate', 'effective_oem_transfer_price',
             'status', 'notes'
         ]
 
@@ -315,11 +322,28 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    @classmethod
-    def get_token(cls, user):
-        token = super().get_token(user)
-        # Add custom claims
-        token['username'] = user.username
-        token['email'] = user.email
-        token['role'] = user.role
-        return token
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        user = self.user
+        
+        # Add role information
+        if user.is_superuser:
+            role = 'admin'
+        elif hasattr(user, 'is_university_poc') and user.is_university_poc():
+            role = 'university_poc'
+        elif hasattr(user, 'is_provider_poc') and user.is_provider_poc():
+            role = 'provider_poc'
+        else:
+            role = 'user'
+            
+        data['role'] = role
+        
+        # Add user details
+        data['user'] = {
+            'id': user.id,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+        }
+        
+        return data

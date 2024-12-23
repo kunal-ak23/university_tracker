@@ -50,6 +50,7 @@ export function UniversityForm({ mode = 'create', university }: UniversityFormPr
 
         setPocs(eligiblePOCs.results)
       } catch (error) {
+        console.error(error);
         toast({
           title: "Error",
           description: "Failed to load eligible POCs",
@@ -62,6 +63,8 @@ export function UniversityForm({ mode = 'create', university }: UniversityFormPr
 
   const form = useForm<UniversityFormValues>({
     resolver: zodResolver(universityFormSchema),
+    mode: "all",
+    reValidateMode: "onChange",
     defaultValues: {
       name: university?.name ?? "",
       website: university?.website ?? "",
@@ -71,11 +74,10 @@ export function UniversityForm({ mode = 'create', university }: UniversityFormPr
       contact_phone: university?.contact_phone ?? "",
       address: university?.address ?? "",
       location: university?.location ?? "",
-      poc: university?.poc?.id ?? "",
+      poc: university?.poc?.toString() ?? "",
     },
   })
 
-  const formValues = form.watch()
   const { isDirty, isValid } = form.formState
 
   async function onSubmit(data: UniversityFormValues) {
@@ -239,9 +241,9 @@ export function UniversityForm({ mode = 'create', university }: UniversityFormPr
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    {pocs.map((poc) => (
+                    {pocs.map((poc, index) => (
                       <SelectItem 
-                        key={poc.id} 
+                        key={"poc" + index} 
                         value={poc.id.toString()}
                       >
                         {poc.full_name || poc.username}

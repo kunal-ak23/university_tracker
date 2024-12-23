@@ -9,15 +9,15 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
-import { Batch, CreateBatchInput } from "@/lib/api/batches"
 import { createBatch, updateBatch } from "@/lib/api/batches"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useEffect, useState } from "react"
-import { Stream, Contract } from "@/types/contract"
-import { getStreams } from "@/lib/api/streams"
+import { Contract } from "@/types/contract"
 import { getContracts } from "@/lib/api/contracts"
 import { TaxRate, getTaxRates } from "@/lib/api/tax"
 import { cn } from "@/lib/utils"
+import { Batch } from "@/types/batch"
+import { Stream } from "@/types/stream"
 
 const batchFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -38,11 +38,13 @@ const batchFormSchema = z.object({
   notes: z.string().optional(),
 })
 
-type BatchFormValues = z.infer<typeof batchFormSchema>
+export type BatchFormValues = z.infer<typeof batchFormSchema>
 
 interface BatchFormProps {
   mode?: 'create' | 'edit'
   batch?: Batch
+  streamId?: string
+  contractId?: string
 }
 
 const statusOptions = [
@@ -68,8 +70,8 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
           getContracts(),
           getTaxRates()
         ])
-        setContracts(fetchedContracts)
-        setTaxRates(fetchedTaxRates)
+        setContracts(fetchedContracts.results)
+        setTaxRates(fetchedTaxRates.results)
       } catch (error) {
         console.error('Failed to fetch data:', error)
         toast({
@@ -85,7 +87,8 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
   // Load initial streams if editing a batch
   useEffect(() => {
     if (mode === 'edit' && batch?.contract) {
-      const contract = contracts.find(c => c.id === batch.contract)
+      const contract = contracts.find(c => c.id.toString() === batch.contract.toString())
+      console.log('contract', contract)
       if (contract) {
         setSelectedContractDetails(contract)
         setStreams(contract.streams)
@@ -93,6 +96,7 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
     }
   }, [mode, batch, contracts])
 
+  console.log('taxRates', batch)
   const form = useForm<BatchFormValues>({
     resolver: zodResolver(batchFormSchema),
     defaultValues: {
@@ -105,7 +109,9 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
       start_date: batch?.start_date ?? "",
       end_date: batch?.end_date ?? "",
       cost_per_student_override: batch?.cost_per_student_override ?? "",
-      tax_rate_override: batch?.tax_rate_override ? batch.tax_rate_override.toString() : "none",
+      tax_rate_override: batch?.tax_rate_override !== undefined && batch?.tax_rate_override !== null 
+        ? batch.tax_rate_override.toString() 
+        : "none",
       oem_transfer_price_override: batch?.oem_transfer_price_override?.toString() ?? "",
       status: batch?.status ?? "planned",
       notes: batch?.notes ?? "",
@@ -113,22 +119,17 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
   })
 
   // Watch form state
-  const formState = form.formState
   const formValues = form.watch()
 
   // Store initial values when form is mounted or batch changes
   useEffect(() => {
     const values = form.getValues()
-    console.log('Setting initial values:', values)
     setInitialValues(values)
   }, [form, batch])
 
   // Function to check if form values have changed
   const hasFormChanged = () => {
-    if (!initialValues) {
-      console.log('No initial values')
-      return false
-    }
+    if (!initialValues) return false
     
     const changes = Object.keys(formValues).filter(key => {
       const initialValue = initialValues[key as keyof BatchFormValues]
@@ -140,15 +141,9 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
         if (!initialValue && currentValue === 'none') return false
       }
       
-      const hasChanged = initialValue !== currentValue
-      if (hasChanged) {
-        console.log(`Field ${key} changed:`, { initialValue, currentValue })
-      }
-      console.log('hasChanged', hasChanged);
-      return hasChanged
+      return initialValue !== currentValue
     })
     
-    console.log('Changed fields:', changes)
     return changes.length > 0
   }
 
@@ -188,20 +183,8 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
     }
   }
 
-  // Function to calculate and format tax rate difference
-  const getTaxDifference = (original: number | null, override: string | null) => {
-    if (!original || !override) return null
-    const diff = parseFloat(override) - original
-    if (diff === 0) return null
-    return {
-      value: Math.abs(diff).toFixed(2),
-      increased: diff > 0
-    }
-  }
-
   // Watch override values for comparison
   const costPerStudentOverride = form.watch('cost_per_student_override')
-  const taxRateOverride = form.watch('tax_rate_override')
   const oemTransferPriceOverride = form.watch('oem_transfer_price_override')
 
   // Calculate differences
@@ -209,20 +192,14 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
     selectedContractDetails.cost_per_student, 
     costPerStudentOverride || null
   ) : null
-  const taxDiff = selectedContractDetails ? getTaxDifference(
-    selectedContractDetails.tax_rate, 
-    (taxRateOverride && taxRateOverride !== 'none') ? taxRateOverride : null
-  ) : null
   const oemPriceDiff = selectedContractDetails ? getPriceDifference(
     selectedContractDetails.oem_transfer_price, 
     oemTransferPriceOverride || null
   ) : null
 
-  const { isDirty, isValid } = form.formState
-
   async function onSubmit(data: BatchFormValues) {
     try {
-      const submitData: CreateBatchInput = {
+      const submitData = {
         name: data.name,
         stream: parseInt(data.stream),
         contract: parseInt(data.contract),
@@ -232,9 +209,9 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
         start_date: data.start_date,
         end_date: data.end_date,
         cost_per_student_override: data.cost_per_student_override || null,
-        tax_rate_override: data.tax_rate_override && data.tax_rate_override !== 'none' 
-          ? parseFloat(data.tax_rate_override) 
-          : null,
+        tax_rate_override: data.tax_rate_override === "none" || !data.tax_rate_override
+          ? null 
+          : parseFloat(data.tax_rate_override),
         oem_transfer_price_override: data.oem_transfer_price_override || null,
         status: data.status,
         notes: data.notes || null,
@@ -510,17 +487,17 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
                       <div className="space-y-2">
                         <Select 
                           onValueChange={field.onChange}
-                          defaultValue={field.value}
+                          value={field.value || "none"}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select tax rate override" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="none">No override</SelectItem>
-                            {taxRates.map((taxRate) => (
+                            {taxRates.map((taxRate, key) => (
                               <SelectItem 
-                                key={taxRate.id} 
-                                value={taxRate.rate.toString()}
+                                key={`tax-rate-${key}`} 
+                                value={taxRate.id.toString()}
                               >
                                 {taxRate.name} ({taxRate.rate}%)
                               </SelectItem>
@@ -590,7 +567,7 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
 
         <Button 
           type="submit" 
-          disabled={mode === 'create' ? (!formState.isDirty || !formState.isValid) : (!hasFormChanged() || !formState.isValid)}
+          disabled={mode === 'create' ? !form.formState.isDirty || !form.formState.isValid : !hasFormChanged() || !form.formState.isValid}
         >
           {mode === 'edit' ? 'Update' : 'Create'} Batch
         </Button>

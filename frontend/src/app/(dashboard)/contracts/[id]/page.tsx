@@ -88,8 +88,8 @@ params: Promise<{ id: string }>;
           <div className="col-span-2 rounded-lg border p-6 space-y-4">
             <h3 className="text-xl font-semibold">Programs</h3>
             <div className="grid gap-4">
-              {contract.contract_programs.map((cp) => (
-                <div key={cp.id} className="rounded border p-4">
+              {contract.contract_programs.map((cp, index) => (
+                <div key={"contract" + index} className="rounded border p-4">
                   <h4 className="font-medium">{cp.program.name}</h4>
                   <p className="text-sm text-muted-foreground">
                     Code: {cp.program.program_code} | Duration: {cp.program.duration} {cp.program.duration_unit}
@@ -104,8 +104,8 @@ params: Promise<{ id: string }>;
           <div className="col-span-2 rounded-lg border p-6 space-y-4">
             <h3 className="text-xl font-semibold">Eligible Streams</h3>
             <div className="grid gap-4">
-              {contract.streams.map((stream) => (
-                <div key={stream.id} className="rounded border p-4">
+              {contract.streams.map((stream, index) => (
+                <div key={"stream" + index} className="rounded border p-4">
                   <h4 className="font-medium">{stream.name}</h4>
                   <p className="text-sm text-muted-foreground">
                     Duration: {stream.duration} {stream.duration_unit}
@@ -128,8 +128,8 @@ params: Promise<{ id: string }>;
               </Link>
             </div>
             <div className="grid gap-4">
-              {contract.contract_files.map((file) => (
-                <div key={file.id} className="rounded border p-4 flex justify-between items-center">
+              {contract.contract_files.map((file, index) => (
+                <div key={"file" + index} className="rounded border p-4 flex justify-between items-center">
                   <div>
                     <h4 className="font-medium">{file.file_type}</h4>
                     {file.description && <p className="text-sm text-muted-foreground">{file.description}</p>}
