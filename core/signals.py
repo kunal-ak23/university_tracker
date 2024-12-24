@@ -23,13 +23,19 @@ def validate_contract_files(sender, instance, **kwargs):
 @receiver(m2m_changed, sender=Billing.batches.through)
 def handle_billing_batches_changed(sender, instance, action, reverse, model, pk_set, **kwargs):
     """Handle changes to billing.batches M2M relationship"""
+    if action == "pre_add" or action == "pre_remove" or action == "pre_clear":
+        # Check if batches can be modified
+        if not instance.can_modify_batches():
+            raise ValidationError("Cannot modify batches on an active or archived billing")
+
     if action == "post_add" or action == "post_remove" or action == "post_clear":
-        # Clear previous batch_snapshots
-        instance.batch_snapshots.all().delete()
-        
-        # Create new snapshots for each batch
-        for batch in instance.batches.all():
-            instance.add_batch_snapshot(batch)
+        # Clear previous batch_snapshots if in draft state
+        if instance.status == 'draft':
+            instance.batch_snapshots.all().delete()
+            
+            # Create new snapshots for each batch
+            for batch in instance.batches.all():
+                instance.add_batch_snapshot(batch)
 
 @receiver(post_save, sender=Invoice)
 def handle_invoice_save(sender, instance, created, **kwargs):

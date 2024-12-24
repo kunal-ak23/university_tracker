@@ -263,9 +263,16 @@ class BatchSnapshot(BaseModel):
 
 
 class Billing(BaseModel):
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('active', 'Active'),
+        ('archived', 'Archived'),
+    ]
+
     name = models.CharField(max_length=255)
     batches = models.ManyToManyField(Batch, related_name='billings')
     notes = models.TextField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     total_payments = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     balance_due = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
@@ -274,11 +281,61 @@ class Billing(BaseModel):
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        skip_update = kwargs.pop('skip_update', False)
+        super().save(*args, **kwargs)
+        # Update totals after save
+        if not skip_update:
+            self.update_totals()
+
+    def archive(self):
+        """Archive the billing"""
+        if self.status == 'draft':
+            raise ValidationError("Cannot archive a draft billing. Publish it first.")
+        if self.status == 'archived':
+            raise ValidationError("Billing is already archived.")
+        
+        # Check if all invoices are paid
+        unpaid_invoices = self.invoices.exclude(status='paid')
+        if unpaid_invoices.exists():
+            raise ValidationError("Cannot archive billing with unpaid invoices.")
+        
+        with transaction.atomic():
+            self.status = 'archived'
+            self.save(skip_update=True)
+
+    def publish(self):
+        """Publish the billing by setting it to active and creating snapshots"""
+        if self.status != 'draft':
+            raise ValidationError("Only draft billings can be published")
+
+        if not self.batches.exists():
+            raise ValidationError("Cannot publish billing without any batches")
+
+        with transaction.atomic():
+            # Clear any existing snapshots
+            self.batch_snapshots.all().delete()
+            
+            # Create new snapshots for each batch
+            for batch in self.batches.all():
+                self.add_batch_snapshot(batch)
+            
+            # Set status to active
+            self.status = 'active'
+            self.save(skip_update=True)
+            
+            # Update totals
+            self.update_totals()
+
+    def can_modify_batches(self):
+        """Check if batches can be modified based on status"""
+        return self.status == 'draft'
+
     def update_totals(self):
         """Update all total fields based on current data"""
-        # Calculate total amount from batch snapshots
+        # Calculate total amount from batch snapshots (including tax)
         total = sum(
-            snapshot.number_of_students * snapshot.cost_per_student 
+            snapshot.number_of_students * snapshot.cost_per_student * (1 + snapshot.tax_rate/100)
             for snapshot in self.batch_snapshots.all()
         )
         self.total_amount = total
@@ -294,13 +351,14 @@ class Billing(BaseModel):
         # Calculate balance due
         self.balance_due = self.total_amount - self.total_payments
 
-        # Calculate OEM transfer amount
+        # Calculate OEM transfer amount (including tax)
         self.total_oem_transfer_amount = sum(
-            snapshot.number_of_students * snapshot.oem_transfer_price 
+            snapshot.number_of_students * snapshot.oem_transfer_price * (1 + snapshot.tax_rate/100)
             for snapshot in self.batch_snapshots.all()
         )
 
-        self.save()
+        # Save without triggering update_totals again
+        self.save(skip_update=True)
 
     def add_batch_snapshot(self, batch):
         """Create a snapshot of the batch's current state"""
@@ -315,12 +373,6 @@ class Billing(BaseModel):
         )
         self.update_totals()
         return snapshot
-
-    def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)
-        # Update totals after save
-        if not kwargs.get('skip_update', False):
-            self.update_totals()
 
 
 class Invoice(BaseModel):

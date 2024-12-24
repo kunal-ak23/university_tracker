@@ -26,6 +26,7 @@ export interface Billing {
   total_payments: string
   balance_due: string
   total_oem_transfer_amount: string
+  status: 'draft' | 'active' | 'archived'
   created_at: string
   updated_at: string
 }

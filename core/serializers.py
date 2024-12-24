@@ -193,11 +193,11 @@ class BillingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Billing
         fields = [
-            'id', 'name', 'batches', 'batch_snapshots', 'notes',
+            'id', 'name', 'batches', 'batch_snapshots', 'notes', 'status',
             'total_amount', 'total_payments', 'balance_due',
             'total_oem_transfer_amount', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at', 'status']
 
 class PaymentScheduleRecipientSerializer(serializers.ModelSerializer):
     class Meta:

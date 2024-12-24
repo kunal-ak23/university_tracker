@@ -1,4 +1,5 @@
 from rest_framework import viewsets, generics, permissions, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
@@ -286,6 +287,67 @@ class BillingViewSet(viewsets.ModelViewSet):
     queryset = Billing.objects.all()
     serializer_class = BillingSerializer
     permission_classes = [IsAuthenticatedAndReadOnly]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    ordering_fields = ['name', 'created_at', 'updated_at', 'status']
+    ordering = ['-created_at']
+    search_fields = ['name', 'notes']
+    filterset_fields = ['status']
+
+    def create(self, request, *args, **kwargs):
+        """Create a new billing and return with redirect info"""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        billing = serializer.save()
+        headers = self.get_success_headers(serializer.data)
+        
+        response_data = {
+            **serializer.data,
+            'redirect': {
+                'id': billing.id,
+                'path': f'/billings/{billing.id}/edit'
+            }
+        }
+        
+        return Response(
+            response_data,
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
+
+    @action(detail=True, methods=['post'])
+    def publish(self, request, pk=None):
+        """Publish a billing by setting it to active and creating snapshots"""
+        try:
+            billing = self.get_object()
+            billing.publish()
+            serializer = self.get_serializer(billing)
+            return Response(serializer.data)
+        except ValidationError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Error publishing billing {pk}: {str(e)}")
+            return Response(
+                {"error": "Failed to publish billing"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def archive(self, request, pk=None):
+        """Archive a billing"""
+        try:
+            billing = self.get_object()
+            billing.archive()
+            serializer = self.get_serializer(billing)
+            return Response(serializer.data)
+        except ValidationError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Error archiving billing {pk}: {str(e)}")
+            return Response(
+                {"error": "Failed to archive billing"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class PaymentViewSet(viewsets.ModelViewSet):
     queryset = Payment.objects.all()

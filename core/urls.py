@@ -42,7 +42,14 @@ urlpatterns = [
     path('batches/<int:pk>/', BatchViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'})),
     
     path('billings/', BillingViewSet.as_view({'get': 'list', 'post': 'create'})),
-    path('billings/<int:pk>/', BillingViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'})),
+    path('billings/<int:pk>/', BillingViewSet.as_view({
+        'get': 'retrieve',
+        'put': 'update',
+        'patch': 'partial_update',
+        'delete': 'destroy'
+    })),
+    path('billings/<int:pk>/publish/', BillingViewSet.as_view({'post': 'publish'})),
+    path('billings/<int:pk>/archive/', BillingViewSet.as_view({'post': 'archive'})),
     
     path('payments/', PaymentViewSet.as_view({'get': 'list', 'post': 'create'})),
     path('payments/<int:pk>/', PaymentViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'})),

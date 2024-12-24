@@ -1,3 +1,5 @@
+"use client"
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -7,43 +9,45 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
 
-interface ConfirmationDialogProps {
+export interface ConfirmationDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onConfirm: () => void
   title: string
   description: string
-  trigger?: React.ReactNode
+  confirmText?: string
+  confirmVariant?: "default" | "destructive"
+  onConfirm: () => void
 }
 
 export function ConfirmationDialog({
   open,
   onOpenChange,
-  onConfirm,
   title,
   description,
-  trigger,
+  confirmText = "Confirm",
+  confirmVariant = "default",
+  onConfirm,
 }: ConfirmationDialogProps) {
-  const handleConfirm = (e: React.MouseEvent) => {
-    e.preventDefault()
-    onConfirm()
-  }
-
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      {trigger && <AlertDialogTrigger asChild>{trigger}</AlertDialogTrigger>}
-      <AlertDialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
+      <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{description}</AlertDialogDescription>
+          <AlertDialogDescription>
+            {description}
+          </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel asChild>
+            <Button variant="outline">Cancel</Button>
+          </AlertDialogCancel>
           <AlertDialogAction asChild>
-            <button onClick={handleConfirm}>Delete</button>
+            <Button variant={confirmVariant} onClick={onConfirm}>
+              {confirmText}
+            </Button>
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
