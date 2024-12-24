@@ -16,10 +16,7 @@ export default async function NewBillingPage() {
       <div className="rounded-lg border p-6">
         <BillingForm
           mode="create"
-          availableBatches={batches.map(batch => ({
-            id: batch.id.toString(),
-            name: batch.name
-          }))}
+          availableBatches={batches}
         />
       </div>
     </div>

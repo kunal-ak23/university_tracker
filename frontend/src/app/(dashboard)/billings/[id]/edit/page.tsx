@@ -17,7 +17,6 @@ export default async function EditBillingPage({
     ])
     billing = billingData
     const batches = batchesData.results
-    console.log(billing, batches);
 
     return (
       <div className="space-y-6">
@@ -32,10 +31,7 @@ export default async function EditBillingPage({
           <BillingForm
             mode="edit"
             billing={billing}
-            availableBatches={batches.map(batch => ({
-              id: batch.id.toString(),
-              name: batch.name
-            }))}
+            availableBatches={batches}
           />
         </div>
       </div>

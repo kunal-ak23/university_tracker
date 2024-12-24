@@ -266,31 +266,44 @@ class Billing(BaseModel):
     name = models.CharField(max_length=255)
     batches = models.ManyToManyField(Batch, related_name='billings')
     notes = models.TextField(blank=True, null=True)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    total_payments = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    balance_due = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    total_oem_transfer_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
 
     def __str__(self):
         return self.name
 
-    @property
-    def total_amount(self):
-        return sum(snapshot.number_of_students * snapshot.cost_per_student for snapshot in self.batch_snapshots.all())
+    def update_totals(self):
+        """Update all total fields based on current data"""
+        # Calculate total amount from batch snapshots
+        total = sum(
+            snapshot.number_of_students * snapshot.cost_per_student 
+            for snapshot in self.batch_snapshots.all()
+        )
+        self.total_amount = total
 
-    @property
-    def total_payments(self):
-        return sum(
+        # Calculate total payments from invoices and payments
+        total_paid = sum(
             payment.amount 
             for invoice in self.invoices.all()
-            for payment in invoice.payments.all()
+            for payment in invoice.payments.filter(status='completed')
+        )
+        self.total_payments = total_paid
+
+        # Calculate balance due
+        self.balance_due = self.total_amount - self.total_payments
+
+        # Calculate OEM transfer amount
+        self.total_oem_transfer_amount = sum(
+            snapshot.number_of_students * snapshot.oem_transfer_price 
+            for snapshot in self.batch_snapshots.all()
         )
 
-    @property
-    def balance_due(self):
-        return self.total_amount - self.total_payments
-
-    @property
-    def total_oem_transfer_amount(self):
-        return sum(snapshot.number_of_students * snapshot.oem_transfer_price for snapshot in self.batch_snapshots.all())
+        self.save()
 
     def add_batch_snapshot(self, batch):
+        """Create a snapshot of the batch's current state"""
         snapshot = BatchSnapshot.objects.create(
             batch=batch,
             billing=self,
@@ -300,7 +313,14 @@ class Billing(BaseModel):
             oem_transfer_price=batch.get_oem_transfer_price(),
             status=batch.status
         )
+        self.update_totals()
         return snapshot
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Update totals after save
+        if not kwargs.get('skip_update', False):
+            self.update_totals()
 
 
 class Invoice(BaseModel):

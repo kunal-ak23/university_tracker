@@ -2,7 +2,7 @@
 import logging
 
 from django.db import transaction, models
-from django.db.models.signals import post_save, post_delete, pre_save
+from django.db.models.signals import post_save, post_delete, pre_save, m2m_changed
 from django.dispatch import receiver
 from django.core.exceptions import ValidationError
 
@@ -20,27 +20,16 @@ def validate_contract_files(sender, instance, **kwargs):
         raise ValidationError("Contract must have at least one contract file.")
 
 
-updating_instance = False
-@receiver(post_save, sender=Billing)
-def calculate_total_amount(sender, instance, **kwargs):
-    def update_amounts():
-        global updating_instance
-        if updating_instance:
-            return
-        updating_instance = True
-        try:
-            # Clear previous batch_snapshots
-            instance.batch_snapshots.all().delete()
-            
-            # Create new snapshots for each batch
-            for batch in instance.batches.all():
-                instance.add_batch_snapshot(batch)
-
-        finally:
-            updating_instance = False
-
-    # Ensure the update happens after the transaction completes
-    transaction.on_commit(update_amounts)
+@receiver(m2m_changed, sender=Billing.batches.through)
+def handle_billing_batches_changed(sender, instance, action, reverse, model, pk_set, **kwargs):
+    """Handle changes to billing.batches M2M relationship"""
+    if action == "post_add" or action == "post_remove" or action == "post_clear":
+        # Clear previous batch_snapshots
+        instance.batch_snapshots.all().delete()
+        
+        # Create new snapshots for each batch
+        for batch in instance.batches.all():
+            instance.add_batch_snapshot(batch)
 
 @receiver(post_save, sender=Invoice)
 def handle_invoice_save(sender, instance, created, **kwargs):
@@ -49,24 +38,23 @@ def handle_invoice_save(sender, instance, created, **kwargs):
 
     # Check for previous actual invoice if this is an update
     if not is_new_invoice:
-        previous_actual_invoice = Invoice.objects.get(pk=instance.pk).actual_invoice
+        try:
+            previous_invoice = Invoice.objects.get(pk=instance.pk)
+            previous_actual_invoice = previous_invoice.actual_invoice
+        except Invoice.DoesNotExist:
+            pass
 
     # If the actual invoice is uploaded and the invoice is paid, create a payment record
     if instance.actual_invoice and (is_new_invoice or not previous_actual_invoice) and instance.status == 'paid':
         with transaction.atomic():
             Payment.objects.create(
-                billing=instance.billing,
+                invoice=instance,
                 amount=instance.amount,
                 payment_date=instance.issue_date,
-                invoice=instance,
                 payment_method='Invoice Payment',
-                status='paid',
+                status='completed',
                 notes='Payment created from actual invoice'
             )
-            # Update the billing totals
-            instance.billing.total_payments = instance.billing.payments.aggregate(total=models.Sum('amount'))['total'] or 0.00
-            instance.billing.balance_due = instance.billing.total_amount - instance.billing.total_payments
-            instance.billing.save()
 
 @receiver(pre_save, sender=Contract)
 def validate_courses_oem(sender, instance, **kwargs):
@@ -88,35 +76,37 @@ def handle_payment_status_change(sender, instance, created, **kwargs):
             # Update invoice status
             invoice = instance.invoice
             invoice.refresh_from_db()  # Ensure we have the latest data
+            invoice.amount_paid = models.F('amount_paid') + instance.amount
+            invoice.save()
+            invoice.refresh_from_db()
             invoice.update_status()
             invoice.save()
 
             # Update billing totals
-            billing = instance.billing
+            billing = invoice.billing
             billing.refresh_from_db()
-            completed_payments = billing.payments.filter(status='completed')
-            billing.total_payments = completed_payments.aggregate(
-                total=models.Sum('amount'))['total'] or 0.00
-            billing.balance_due = billing.total_amount - billing.total_payments
-            billing.save()
+            billing.update_totals()
 
 @receiver(post_save, sender=Invoice)
 def create_payment_schedule(sender, instance, created, **kwargs):
     """Create payment schedule when invoice is created"""
     if created:
-        # Get recipients from the contract's POC and OEM contact
-        contract = instance.billing.batches.first().contract
-        recipients = [
-            contract.oem.contact_email,
-            contract.oem.poc.email if contract.oem.poc else None
-        ]
-        # Filter out None values and create comma-separated string
-        reminder_recipients = ','.join(filter(None, recipients))
-        
-        PaymentScheduleService.create_payment_schedule(
-            invoice=instance,
-            amount=instance.amount,
-            due_date=instance.due_date,
-            reminder_recipients=reminder_recipients
-        )
+        try:
+            # Get recipients from the contract's POC and OEM contact
+            contract = instance.billing.batches.first().contract
+            recipients = [
+                contract.oem.contact_email,
+                contract.oem.poc.email if contract.oem.poc else None
+            ]
+            # Filter out None values and create comma-separated string
+            reminder_recipients = ','.join(filter(None, recipients))
+            
+            PaymentScheduleService.create_payment_schedule(
+                invoice=instance,
+                amount=instance.amount,
+                due_date=instance.due_date,
+                reminder_recipients=reminder_recipients
+            )
+        except Exception as e:
+            logger.error(f"Failed to create payment schedule: {str(e)}")
 
