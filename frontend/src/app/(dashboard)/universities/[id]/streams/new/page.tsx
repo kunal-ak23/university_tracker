@@ -3,10 +3,10 @@
 import { StreamForm } from "@/components/streams/stream-form"
 
 
-export default function NewStreamPage(params: {
-    id: string
-  }) {
-  const {id} = params;
+export default async function NewStreamPage({params}: {params: Promise<{
+  id: string
+}>}) {
+  const {id} = await params;
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">

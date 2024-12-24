@@ -7,7 +7,7 @@ logger = get_logger()
 
 from .models import (
     OEM, Program, CustomUser, University, Contract, ContractProgram, Batch,
-    Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice, PaymentSchedule, PaymentReminder
+    Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice, PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient
 )
 
 # University Serializer
@@ -53,11 +53,16 @@ class ContractFileSerializer(serializers.ModelSerializer):
 
 # Program Serializer
 class ProgramSerializer(serializers.ModelSerializer):
-    provider = OEMSerializer()
+    provider = OEMSerializer(read_only=True)
+    provider_id = serializers.PrimaryKeyRelatedField(
+        queryset=OEM.objects.all(),
+        write_only=True,
+        source='provider'
+    )
 
     class Meta:
         model = Program
-        fields = '__all__'
+        fields = ['id', 'name', 'program_code', 'provider', 'provider_id', 'duration', 'duration_unit', 'description', 'prerequisites']
 
 
 # ContractProgram Serializer
@@ -149,27 +154,32 @@ class BatchSerializer(serializers.ModelSerializer):
 
 # Billing Serializer
 class BillingSerializer(serializers.ModelSerializer):
-    batch = BatchSerializer(read_only=True)
-    batch_id = serializers.PrimaryKeyRelatedField(queryset=Batch.objects.all(), source='batch', write_only=True)
+    total_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     total_payments = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     balance_due = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    total_oem_transfer_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    batch_snapshots = BatchSnapshotSerializer(many=True, read_only=True)
 
     class Meta:
         model = Billing
-        fields = '__all__'
+        fields = [
+            'id', 'name', 'batches', 'batch_snapshots', 'notes',
+            'total_amount', 'total_payments', 'balance_due',
+            'total_oem_transfer_amount', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
 
 
 # Payment Serializer
 class PaymentSerializer(serializers.ModelSerializer):
-    billing = BillingSerializer(read_only=True)
-    billing_id = serializers.PrimaryKeyRelatedField(queryset=Billing.objects.all(), source='billing', write_only=True)
+    documents = PaymentDocumentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Payment
         fields = [
-            'id', 'billing', 'invoice', 'amount', 'payment_date',
+            'id', 'invoice', 'amount', 'payment_date',
             'payment_method', 'status', 'transaction_reference',
-            'notes', 'attachment', 'created_at', 'updated_at'
+            'notes', 'documents', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
 
@@ -197,9 +207,11 @@ class BatchSnapshotSerializer(serializers.ModelSerializer):
     class Meta:
         model = BatchSnapshot
         fields = [
-            'id', 'batch', 'number_of_students', 'start_date', 'end_date',
-            'cost_per_student', 'tax_rate', 'status', 'notes'
+            'id', 'batch', 'number_of_students',
+            'cost_per_student', 'tax_rate', 'oem_transfer_price',
+            'status', 'created_at', 'updated_at'
         ]
+        read_only_fields = ['created_at', 'updated_at']
 
 
 class InvoiceSerializer(serializers.ModelSerializer):
@@ -221,8 +233,15 @@ class InvoiceSerializer(serializers.ModelSerializer):
         return obj.amount - obj.amount_paid
 
 
+class PaymentScheduleRecipientSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentScheduleRecipient
+        fields = ['id', 'payment_schedule', 'email']
+
+
 class PaymentScheduleSerializer(serializers.ModelSerializer):
-    reminder_recipients_list = serializers.ListField(
+    recipients = PaymentScheduleRecipientSerializer(many=True, read_only=True)
+    reminder_recipients = serializers.ListField(
         child=serializers.EmailField(),
         source='get_reminder_recipients',
         read_only=True
@@ -232,8 +251,8 @@ class PaymentScheduleSerializer(serializers.ModelSerializer):
         model = PaymentSchedule
         fields = [
             'id', 'invoice', 'amount', 'due_date', 'frequency',
-            'reminder_days', 'reminder_recipients', 'reminder_recipients_list',
-            'status', 'notes', 'created_at', 'updated_at'
+            'reminder_days', 'status', 'recipients', 'reminder_recipients',
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['status', 'created_at', 'updated_at']
 
@@ -347,3 +366,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         }
         
         return data
+
+
+class PaymentDocumentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentDocument
+        fields = ['id', 'payment', 'file', 'description', 'uploaded_by', 'created_at', 'updated_at']
+        read_only_fields = ['uploaded_by', 'created_at', 'updated_at']

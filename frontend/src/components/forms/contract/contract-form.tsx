@@ -286,11 +286,54 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
       router.refresh()
     } catch (error) {
       console.error(`Failed to ${mode} contract:`, error)
-      toast({
-        title: "Error",
-        description: `Failed to ${mode} contract`,
-        variant: "destructive",
-      })
+      
+      // Handle server validation errors
+      if (error instanceof Error) {
+        try {
+          const errorData = JSON.parse(error.message)
+          
+          // Set server-side validation errors in the form
+          if (typeof errorData === 'object') {
+            Object.keys(errorData).forEach((key) => {
+              const messages = errorData[key]
+              if (Array.isArray(messages)) {
+                form.setError(key as keyof ContractFormValues, {
+                  type: 'server',
+                  message: messages.join(', ')
+                })
+              } else if (typeof messages === 'string') {
+                form.setError(key as keyof ContractFormValues, {
+                  type: 'server',
+                  message: messages
+                })
+              }
+            })
+          }
+          
+          // Show a toast with the first error message
+          const firstError = Object.values(errorData)[0]
+          const errorMessage = Array.isArray(firstError) ? firstError[0] : firstError
+          
+          toast({
+            title: "Error",
+            description: errorMessage || `Failed to ${mode} contract`,
+            variant: "destructive",
+          })
+        } catch {
+          // If error message isn't JSON, show it directly
+          toast({
+            title: "Error",
+            description: error.message || `Failed to ${mode} contract`,
+            variant: "destructive",
+          })
+        }
+      } else {
+        toast({
+          title: "Error",
+          description: `Failed to ${mode} contract`,
+          variant: "destructive",
+        })
+      }
     }
   }
 

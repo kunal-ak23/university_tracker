@@ -1,94 +1,107 @@
 "use client"
 
-import { OEM } from "@/types/oem"
+import { Program } from "@/types/program"
 import { DataTable } from "@/components/ui/data-table"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2 } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { deleteOEM } from "@/lib/api/oems"
+import { deleteProgram } from "@/lib/api/programs"
 import { useToast } from "@/hooks/use-toast"
 import { ColumnDef, Row } from "@tanstack/react-table"
 
-interface OEMsTableProps {
-  oems: OEM[]
+interface ProgramsTableProps {
+  programs: Program[]
   currentPage: number
   totalPages: number
   onPageChange: (page: number) => void
   onSearch: (query: string) => void
   onSort?: (column: string, direction: 'asc' | 'desc') => void
-  onDelete: (id: string) => void
+  onDelete: (id: number) => void
   sortColumn?: string
   sortDirection?: 'asc' | 'desc'
   hasNextPage?: boolean
   hasPreviousPage?: boolean
   totalCount: number
+  showProvider?: boolean
 }
 
-export function OEMsTable({ 
-  oems,
+export function ProgramsTable({ 
+  programs,
   currentPage,
   totalPages,
   onPageChange,
+  onSearch,
+  onSort,
+  sortColumn,
+  sortDirection,
   onDelete,
+  hasNextPage,
+  hasPreviousPage,
   totalCount,
-}: OEMsTableProps) {
+  showProvider = true,
+}: ProgramsTableProps) {
   const router = useRouter()
   const { toast } = useToast()
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: number) => {
     try {
-      await deleteOEM(id)
-      //remove from table
-      onDelete(id);
+      await deleteProgram(id)
+      onDelete(id)
       toast({
         title: "Success",
-        description: "OEM deleted successfully",
+        description: "Program deleted successfully",
       })
       router.refresh()
     } catch (error) {
-      console.error(error);
+      console.error(error)
       toast({
         title: "Error",
-        description: "Failed to delete OEM",
+        description: "Failed to delete program",
         variant: "destructive",
       })
     }
   }
 
-  const columns: ColumnDef<OEM, any>[] = [
+  const columns: ColumnDef<Program, any>[] = [
     {
       id: "name",
       header: "Name",
-      accessorFn: (row: OEM) => row.name,
-      cell: ({ row }: { row: Row<OEM> }) => (
-        <Link href={`/oems/${row.original.id}`} className="hover:underline">
+      accessorFn: (row: Program) => row.name,
+      cell: ({ row }: { row: Row<Program> }) => (
+        <Link href={`/programs/${row.original.id}`} className="hover:underline">
           {row.original.name}
         </Link>
       ),
     },
     {
-      id: "website",
-      header: "Website",
-      accessorFn: (row: OEM) => row.website,
-      cell: ({ row }: { row: Row<OEM> }) => (
-        <a href={row.original.website} target="_blank" rel="noopener noreferrer" className="hover:underline">
-          {row.original.website}
-        </a>
-      ),
+      id: "program_code",
+      header: "Program Code",
+      accessorFn: (row: Program) => row.program_code,
     },
+    ...(showProvider ? [{
+      id: "provider",
+      header: "Provider",
+      accessorFn: (row: Program) => row.provider?.name,
+      cell: ({ row }: { row: Row<Program> }) => (
+        <Link href={`/oems/${row.original.provider?.id}`} className="hover:underline">
+          {row.original.provider?.name}
+        </Link>
+      ),
+    }] : []),
     {
-      id: "contact_email",
-      header: "Contact Email",
-      accessorFn: (row: OEM) => row.contact_email,
-      cell: ({ row }: { row: Row<OEM> }) => row.original.contact_email,
+      id: "duration",
+      header: "Duration",
+      cell: ({ row }: { row: Row<Program> }) => (
+        `${row.original.duration} ${row.original.duration_unit}`
+      ),
     },
     {
       id: "actions",
       header: "Actions",
-      cell: ({ row }: { row: Row<OEM> }) => (
+      cell: ({ row }: { row: Row<Program> }) => (
         <div className="flex items-center gap-2">
-          <Link href={`/oems/${row.original.id}/edit`}>
+          <Link href={`/programs/${row.original.id}/edit`}>
             <Button variant="ghost" size="icon">
               <Edit className="h-4 w-4" />
             </Button>
@@ -106,14 +119,14 @@ export function OEMsTable({
   ]
 
   return (
-    <DataTable<OEM, any>
-      data={oems}
+    <DataTable<Program, any>
+      data={programs}
       columns={columns}
       pageCount={totalPages}
       currentPage={currentPage}
-      searchPlaceholder="Search OEMs..."
-      hasNextPage={currentPage < totalPages}
-      hasPreviousPage={currentPage > 1}
+      searchPlaceholder="Search programs..."
+      hasNextPage={hasNextPage}
+      hasPreviousPage={hasPreviousPage}
       onPageChange={onPageChange}
       totalCount={totalCount}
       pageSize={25}

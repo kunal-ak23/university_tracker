@@ -1,9 +1,3 @@
-import { OEM } from "./oem"
-import { University } from "./university"
-import { Stream } from "./stream"
-import { Program } from "./program"
-
-
 export interface Contract {
   id: string
   name: string

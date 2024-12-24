@@ -1,12 +1,10 @@
 import { getBatchesByStream } from "@/lib/api/batches"
 import BatchesList from "./batches-list"
 
-export default async function BatchesPage({
-  params,
-}: {
-  params: { id: string }
-}) {
-  const id = params.id
+export default async function BatchesPage({params}: {params: Promise<{
+  id: string
+}>}) {
+  const {id} = await params;
   const batches = (await getBatchesByStream(id)).results
 
   return <BatchesList initialBatches={batches} streamId={id} />

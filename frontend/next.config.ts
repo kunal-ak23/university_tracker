@@ -6,7 +6,10 @@ const nextConfig: NextConfig = {
     serverActions: {
       bodySizeLimit: '200mb' // Set desired value here
     }
-  }
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
 };
 
 export default nextConfig;

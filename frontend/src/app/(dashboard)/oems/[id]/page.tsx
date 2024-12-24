@@ -1,8 +1,11 @@
 import { getOEM } from "@/lib/api/oems"
 import Link from "next/link"
 import { notFound } from "next/navigation"
-import { ExternalLink } from "lucide-react"
+import { ExternalLink, Plus } from "lucide-react"
 import { OEMActions } from "@/components/oems/oem-actions"
+import { Button } from "@/components/ui/button"
+import { Suspense } from "react"
+import { OEMProgramsList } from "./programs-list"
 
 export default async function OEMPage({
   params,
@@ -72,6 +75,21 @@ export default async function OEMPage({
             </div>
           </dl>
         </div>
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-semibold">Programs</h3>
+          <Link href={`/programs/new?provider=${oem.id}`}>
+            <Button>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Program
+            </Button>
+          </Link>
+        </div>
+        <Suspense fallback={<div className="flex items-center justify-center h-24">Loading...</div>}>
+          <OEMProgramsList oemId={parseInt(id)} />
+        </Suspense>
       </div>
     </div>
   )

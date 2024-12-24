@@ -2,8 +2,10 @@ import { getBatch } from "@/lib/api/batches"
 import { getContract } from "@/lib/api/contracts"
 import BatchDetail from "./batch-detail"
 
-const BatchDetailPage = async ({ params }: { params: { id: string } }) => {
-  const id = params.id;
+const BatchDetailPage = async ({params}:  {params: Promise<{
+  id: string
+}>}) => {
+  const {id} = await params;
   const batch = await getBatch(id);
   const contract = await getContract(batch.contract.toString());
 

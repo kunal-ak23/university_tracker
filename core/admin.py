@@ -10,7 +10,7 @@ from django.utils.safestring import mark_safe
 
 from .logger_service import get_logger
 from .models import Billing, Payment, OEM, Program, University, Stream, TaxRate, Contract, ContractProgram, Batch, \
-    Invoice, ContractFile, CustomUser, BatchSnapshot
+    Invoice, ContractFile, CustomUser, BatchSnapshot, PaymentDocument, PaymentScheduleRecipient, PaymentSchedule
 
 
 logger = get_logger()
@@ -228,28 +228,40 @@ class CustomUserAdmin(UserAdmin):
 
 @admin.register(BatchSnapshot)
 class BatchSnapshotAdmin(admin.ModelAdmin):
-    list_display = [
-        'batch', 
-        'number_of_students', 
-        'cost_per_student',
-        'tax_rate',
-        'oem_transfer_price',
-        'status',
-        'created_at'
-    ]
+    list_display = ['id', 'batch', 'number_of_students', 'cost_per_student', 'tax_rate', 'oem_transfer_price', 'status']
+    list_filter = ['status', 'batch']
     search_fields = ['batch__name']
-    list_filter = ['status', 'created_at']
-    readonly_fields = [
-        'batch',
-        'number_of_students',
-        'start_date',
-        'end_date',
-        'cost_per_student',
-        'tax_rate',
-        'oem_transfer_price',
-        'status',
-        'notes',
-        'created_at',
-        'updated_at',
-        'version'
-    ]
+    readonly_fields = ['created_at', 'updated_at']
+
+@admin.register(PaymentDocument)
+class PaymentDocumentAdmin(admin.ModelAdmin):
+    list_display = ['id', 'payment', 'description', 'uploaded_by', 'created_at']
+    list_filter = ['uploaded_by']
+    search_fields = ['description', 'payment__transaction_reference']
+    readonly_fields = ['uploaded_by', 'created_at', 'updated_at']
+
+@admin.register(Payment)
+class PaymentAdmin(admin.ModelAdmin):
+    list_display = ['id', 'invoice', 'amount', 'payment_date', 'payment_method', 'status', 'transaction_reference']
+    list_filter = ['status', 'payment_method', 'payment_date']
+    search_fields = ['transaction_reference', 'notes']
+    readonly_fields = ['created_at', 'updated_at']
+
+@admin.register(PaymentScheduleRecipient)
+class PaymentScheduleRecipientAdmin(admin.ModelAdmin):
+    list_display = ['id', 'payment_schedule', 'email']
+    list_filter = ['payment_schedule']
+    search_fields = ['email']
+
+class PaymentScheduleRecipientInline(admin.TabularInline):
+    model = PaymentScheduleRecipient
+    extra = 1
+    fields = ['email']
+
+@admin.register(PaymentSchedule)
+class PaymentScheduleAdmin(admin.ModelAdmin):
+    list_display = ['id', 'invoice', 'amount', 'due_date', 'frequency', 'status']
+    list_filter = ['status', 'frequency', 'due_date']
+    search_fields = ['invoice__reference_number']
+    readonly_fields = ['status', 'created_at', 'updated_at']
+    inlines = [PaymentScheduleRecipientInline]

@@ -26,13 +26,7 @@ interface BatchesTableProps {
 
 export function BatchesTable({ 
   batches,
-  currentPage,
   totalPages,
-  onPageChange,
-  onSearch,
-  onSort,
-  sortColumn,
-  sortDirection,
   hasNextPage,
   hasPreviousPage,
 }: BatchesTableProps) {

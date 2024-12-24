@@ -44,11 +44,51 @@ export function LoginForm() {
       })
 
       if (response?.error) {
-        toast({
-          title: "Error",
-          description: "Invalid credentials",
-          variant: "destructive",
-        })
+        // Handle server validation errors
+        try {
+          const errorData = JSON.parse(response.error)
+          
+          // Set server-side validation errors in the form
+          if (typeof errorData === 'object') {
+            Object.keys(errorData).forEach((key) => {
+              const messages = errorData[key]
+              if (Array.isArray(messages)) {
+                form.setError(key as keyof LoginFormValues, {
+                  type: 'server',
+                  message: messages.join(', ')
+                })
+              } else if (typeof messages === 'string') {
+                form.setError(key as keyof LoginFormValues, {
+                  type: 'server',
+                  message: messages
+                })
+              }
+            })
+            
+            // Show a toast with the first error message
+            const firstError = Object.values(errorData)[0]
+            const errorMessage = Array.isArray(firstError) ? firstError[0] : firstError
+            
+            toast({
+              title: "Error",
+              description: errorMessage || "Invalid credentials",
+              variant: "destructive",
+            })
+          } else {
+            toast({
+              title: "Error",
+              description: "Invalid credentials",
+              variant: "destructive",
+            })
+          }
+        } catch {
+          // If error isn't JSON, show it directly
+          toast({
+            title: "Error",
+            description: response.error || "Invalid credentials",
+            variant: "destructive",
+          })
+        }
         return
       }
 
@@ -58,11 +98,21 @@ export function LoginForm() {
       }
     } catch (error) {
       console.error("Login error:", error)
-      toast({
-        title: "Error",
-        description: "Something went wrong",
-        variant: "destructive",
-      })
+      
+      // Handle unexpected errors
+      if (error instanceof Error) {
+        toast({
+          title: "Error",
+          description: error.message || "Something went wrong",
+          variant: "destructive",
+        })
+      } else {
+        toast({
+          title: "Error",
+          description: "Something went wrong",
+          variant: "destructive",
+        })
+      }
     } finally {
       setIsLoading(false)
     }

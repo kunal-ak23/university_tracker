@@ -236,30 +236,19 @@ class Batch(BaseModel):
 class BatchSnapshot(BaseModel):
     batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='original_batch')
     number_of_students = models.PositiveIntegerField()
-    start_date = models.DateField(null=True)
-    end_date = models.DateField(null=True)
-    cost_per_student = models.DecimalField(
-        max_digits=12, 
-        decimal_places=2,
-        default=0.00,  # Add default value
-    )
-    tax_rate = models.DecimalField(
-        max_digits=5, 
-        decimal_places=2,
-        default=0.00,  # Add default value
-    )
-    status = models.CharField(max_length=20, choices=[
-        ('planned', 'Planned'),
-        ('ongoing', 'Ongoing'),
-        ('completed', 'Completed'),
-    ], default='planned')
-    notes = models.TextField(blank=True, null=True)
+    cost_per_student = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
     oem_transfer_price = models.DecimalField(
         max_digits=12, 
         decimal_places=2,
         default=0.00,
         help_text="OEM transfer price at the time of snapshot"
     )
+    status = models.CharField(max_length=20, choices=[
+        ('planned', 'Planned'),
+        ('ongoing', 'Ongoing'),
+        ('completed', 'Completed'),
+    ], default='planned')
 
     def __str__(self):
         return (
@@ -275,56 +264,50 @@ class BatchSnapshot(BaseModel):
 class Billing(BaseModel):
     name = models.CharField(max_length=255)
     batches = models.ManyToManyField(Batch, related_name='billings')
-    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
-    total_payments = models.DecimalField(
-        max_digits=12, 
-        decimal_places=2, 
-        default=Decimal('0.00')
-    )
-    balance_due = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
-    notes = models.TextField(blank=True, null=True)
     batch_snapshots = models.ManyToManyField(BatchSnapshot, related_name='snapshots', blank=True)
-    total_oem_transfer_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
-    
-    def calculate_totals(self):
-        """Calculate total amounts including OEM transfer price"""
-        total_amount = Decimal('0.00')
-        total_oem_transfer = Decimal('0.00')
-        total_payments = self.total_payments or Decimal('0.00')
-        
-        for batch_snapshot in self.batch_snapshots.all():
-            # Get the original batch to access OEM transfer price
-            batch = batch_snapshot.batch
-            students = Decimal(str(batch_snapshot.number_of_students))
-            
-            # Calculate student cost
-            student_cost = batch_snapshot.cost_per_student * students
-            tax_amount = student_cost * (batch_snapshot.tax_rate / Decimal('100.00'))
-            total_amount += student_cost + tax_amount
-            
-            # Calculate OEM transfer amount
-            oem_transfer_price = batch_snapshot.oem_transfer_price  # Use snapshot's stored value
-            total_oem_transfer += oem_transfer_price * students
-        
-        self.total_amount = total_amount
-        self.total_oem_transfer_amount = total_oem_transfer
-        self.balance_due = self.total_amount - total_payments
-        self.save()
+    notes = models.TextField(blank=True, null=True)
+
+    @property
+    def total_amount(self):
+        """Calculate total amount from batch snapshots"""
+        total = Decimal('0.00')
+        for snapshot in self.batch_snapshots.all():
+            students = Decimal(str(snapshot.number_of_students))
+            student_cost = snapshot.cost_per_student * students
+            tax_amount = student_cost * (snapshot.tax_rate / Decimal('100.00'))
+            total += student_cost + tax_amount
+        return total
+
+    @property
+    def total_payments(self):
+        """Calculate total payments from completed payments"""
+        return self.payments.filter(status='completed').aggregate(
+            total=models.Sum('amount'))['total'] or Decimal('0.00')
+
+    @property
+    def balance_due(self):
+        """Calculate balance due"""
+        return self.total_amount - self.total_payments
+
+    @property
+    def total_oem_transfer_amount(self):
+        """Calculate total OEM transfer amount from batch snapshots"""
+        total = Decimal('0.00')
+        for snapshot in self.batch_snapshots.all():
+            students = Decimal(str(snapshot.number_of_students))
+            total += snapshot.oem_transfer_price * students
+        return total
 
     def add_batch_snapshot(self, batch):
         snapshot = BatchSnapshot.objects.create(
             batch=batch,
             number_of_students=batch.number_of_students,
-            start_date=batch.start_date,
-            end_date=batch.end_date,
-            status=batch.status,
             cost_per_student=batch.get_cost_per_student(),
             tax_rate=batch.get_tax_rate().rate,
             oem_transfer_price=batch.get_oem_transfer_price(),
-            notes=batch.notes
+            status=batch.status
         )
         self.batch_snapshots.add(snapshot)
-        self.calculate_totals()
         return snapshot
 
     def __str__(self):
@@ -367,7 +350,6 @@ class Invoice(BaseModel):
 
 
 class Payment(BaseModel):
-    billing = models.ForeignKey(Billing, on_delete=models.CASCADE, related_name='payments')
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='payments')
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_date = models.DateField()
@@ -379,7 +361,6 @@ class Payment(BaseModel):
     ], default='pending')
     transaction_reference = models.CharField(max_length=255, blank=True, null=True)
     notes = models.TextField(blank=True, null=True)
-    attachment = models.FileField(upload_to='payments/', blank=True, null=True)
 
     def clean(self):
         # Validate that payment amount doesn't exceed remaining invoice amount
@@ -396,16 +377,18 @@ class Payment(BaseModel):
                 # Update invoice amount_paid
                 self.invoice.amount_paid = models.F('amount_paid') + self.amount
                 self.invoice.save()
-                
-                # Recalculate billing totals
-                self.billing.total_payments = self.billing.payments.filter(
-                    status='completed'
-                ).aggregate(total=models.Sum('amount'))['total'] or 0.00
-                self.billing.balance_due = self.billing.total_amount - self.billing.total_payments
-                self.billing.save()
 
     def __str__(self):
         return f'Payment {self.id} for Invoice {self.invoice.id}'
+
+class PaymentDocument(BaseModel):
+    payment = models.ForeignKey(Payment, on_delete=models.CASCADE, related_name='documents')
+    file = models.FileField(upload_to='payments/')
+    description = models.CharField(max_length=255, blank=True, null=True)
+    uploaded_by = models.ForeignKey('CustomUser', on_delete=models.SET_NULL, null=True)
+
+    def __str__(self):
+        return f'Document for Payment {self.payment.id}'
 
 class CustomUser(AbstractUser):
     ROLE_CHOICES = [
@@ -446,24 +429,16 @@ class PaymentSchedule(BaseModel):
         default=7,
         help_text="Days before due date to send reminder"
     )
-    reminder_recipients = models.TextField(
-        help_text="Comma-separated email addresses for reminders",
-        blank=True,
-        null=True
-    )
     status = models.CharField(max_length=20, choices=[
         ('pending', 'Pending'),
         ('paid', 'Paid'),
         ('overdue', 'Overdue'),
     ], default='pending')
-    notes = models.TextField(blank=True, null=True)
 
     def get_reminder_recipients(self):
         """Returns list of reminder recipients"""
-        if not self.reminder_recipients:
-            # Fallback to OEM contact if no custom recipients
-            return [self.invoice.billing.batches.first().contract.oem.contact_email]
-        return [email.strip() for email in self.reminder_recipients.split(',') if email.strip()]
+        # Fallback to OEM contact if no custom recipients
+        return [self.invoice.billing.batches.first().contract.oem.contact_email]
 
     def __str__(self):
         return f'Payment Schedule for Invoice {self.invoice.id} - Due: {self.due_date}'
@@ -472,6 +447,13 @@ class PaymentSchedule(BaseModel):
         if self.due_date < date.today():
             self.status = 'overdue'
         super().save(*args, **kwargs)
+
+class PaymentScheduleRecipient(BaseModel):
+    payment_schedule = models.ForeignKey(PaymentSchedule, on_delete=models.CASCADE, related_name='recipients')
+    email = models.EmailField()
+
+    def __str__(self):
+        return f'Recipient {self.email} for Schedule {self.payment_schedule.id}'
 
 
 class PaymentReminder(BaseModel):

@@ -50,11 +50,54 @@ export function RegisterForm() {
       router.push("/auth/login");
     } catch (error) {
       console.error(error)
-      toast({
-        title: "Error",
-        description: "Registration failed",
-        variant: "destructive",
-      })
+      
+      // Handle server validation errors
+      if (error instanceof Error) {
+        try {
+          const errorData = JSON.parse(error.message)
+          
+          // Set server-side validation errors in the form
+          if (typeof errorData === 'object') {
+            Object.keys(errorData).forEach((key) => {
+              const messages = errorData[key]
+              if (Array.isArray(messages)) {
+                form.setError(key as keyof RegisterFormValues, {
+                  type: 'server',
+                  message: messages.join(', ')
+                })
+              } else if (typeof messages === 'string') {
+                form.setError(key as keyof RegisterFormValues, {
+                  type: 'server',
+                  message: messages
+                })
+              }
+            })
+          }
+          
+          // Show a toast with the first error message
+          const firstError = Object.values(errorData)[0]
+          const errorMessage = Array.isArray(firstError) ? firstError[0] : firstError
+          
+          toast({
+            title: "Error",
+            description: errorMessage || "Registration failed",
+            variant: "destructive",
+          })
+        } catch {
+          // If error message isn't JSON, show it directly
+          toast({
+            title: "Error",
+            description: error.message || "Registration failed",
+            variant: "destructive",
+          })
+        }
+      } else {
+        toast({
+          title: "Error",
+          description: "Registration failed",
+          variant: "destructive",
+        })
+      }
     }
   }
 

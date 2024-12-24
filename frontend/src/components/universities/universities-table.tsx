@@ -25,13 +25,7 @@ interface UniversitiesTableProps {
 
 export function UniversitiesTable({ 
   universities,
-  currentPage,
   totalPages,
-  onPageChange,
-  onSearch,
-  onSort,
-  sortColumn,
-  sortDirection,
   hasNextPage,
   hasPreviousPage,
 }: UniversitiesTableProps) {

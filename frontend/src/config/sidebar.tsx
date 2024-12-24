@@ -5,6 +5,7 @@ import {
   GraduationCap,
   Settings,
   Users,
+  BookOpen,
 } from "lucide-react"
 
 export const sidebarConfig = [
@@ -22,6 +23,11 @@ export const sidebarConfig = [
     title: "OEMs",
     href: "/oems",
     icon: Building2,
+  },
+  {
+    title: "Programs",
+    href: "/programs",
+    icon: BookOpen,
   },
   {
     title: "Universities",

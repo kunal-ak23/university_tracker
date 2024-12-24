@@ -14,9 +14,9 @@ import { getBatchesByStream } from "@/lib/api/batches"
 export default async function UniversityPage({
   params,
 }: {
-  params: { id: string }
+  params: Promise<{ id: string }>
 }) {
-  const { id } = params
+  const { id } = await params
   
   // First try to fetch the university
   let university: University
@@ -42,10 +42,7 @@ export default async function UniversityPage({
     if (streams.length > 0) {
       const batchesPromises = streams.map(stream => getBatchesByStream(stream.id))
       const batchesResults = await Promise.all(batchesPromises)
-      allBatches = batchesResults.flat().map(batchResults => ({
-        ...batchResults.results[0],
-        stream: streams.find(s => s.id === batchResults.results[0].stream.id)
-      }))
+      allBatches = batchesResults.flatMap(batchResults => batchResults.results)
     }
   } catch (error) {
     console.error('Error fetching batches:', error)
@@ -66,8 +63,63 @@ export default async function UniversityPage({
 
   const totalStudents = allBatches.reduce((sum, batch) => sum + batch.number_of_students, 0)
   const ongoingBatches = allBatches.filter(batch => batch.status === 'ongoing')
-  const totalRevenue = allBatches.reduce((sum, batch) => 
+  const plannedBatches = allBatches.filter(batch => batch.status === 'planned')
+  const completedBatches = allBatches.filter(batch => batch.status === 'completed')
+  const activeRevenue = ongoingBatches.reduce((sum, batch) => 
     sum + (parseFloat(batch.effective_cost_per_student) * batch.number_of_students), 0
+  )
+
+  const BatchCard = ({ batch }: { batch: Batch }) => (
+    <div className="rounded-lg border p-4 space-y-3">
+      <div className="flex justify-between items-start">
+        <h4 className="font-semibold">{batch.name}</h4>
+        <Badge className={getStatusColor(batch.status)}>
+          {batch.status.charAt(0).toUpperCase() + batch.status.slice(1)}
+        </Badge>
+      </div>
+      <p className="text-sm text-gray-600">
+        Stream: {typeof batch.stream === 'object' && batch.stream ? batch.stream.name : ''}
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex items-center gap-2 text-sm text-gray-600">
+          <Users className="h-4 w-4" />
+          {batch.number_of_students} students
+        </div>
+        <div className="flex items-center gap-2 text-sm text-gray-600">
+          <Calendar className="h-4 w-4" />
+          {batch.start_year} - {batch.end_year}
+        </div>
+        <div className="text-sm font-medium">
+          Cost per Student: ₹{parseFloat(batch.effective_cost_per_student).toLocaleString('en-IN')}
+          {batch.cost_per_student_override && ' (Override)'}
+        </div>
+      </div>
+      {batch.notes && (
+        <p className="text-sm text-gray-600 line-clamp-2">
+          {batch.notes}
+        </p>
+      )}
+      <div className="pt-2">
+        <Link href={`/batches/${batch.id}`}>
+          <Button variant="outline" size="sm" className="w-full">
+            View Details
+          </Button>
+        </Link>
+      </div>
+    </div>
+  )
+
+  const BatchesSection = ({ title, batches }: { title: string, batches: Batch[] }) => (
+    batches.length > 0 ? (
+      <div className="space-y-4">
+        <h4 className="font-medium text-gray-600">{title} ({batches.length})</h4>
+        <div className="grid grid-cols-3 gap-4">
+          {batches.map((batch, index) => (
+            <BatchCard key={batch.id || index} batch={batch} />
+          ))}
+        </div>
+      </div>
+    ) : null
   )
 
   return (
@@ -111,9 +163,9 @@ export default async function UniversityPage({
         <div className="rounded-lg border p-4 space-y-2">
           <div className="flex items-center gap-2 text-gray-600">
             <IndianRupee className="h-4 w-4" />
-            <h4 className="font-medium">Total Revenue</h4>
+            <h4 className="font-medium">Active Revenue</h4>
           </div>
-          <p className="text-2xl font-bold">₹{totalRevenue.toLocaleString('en-IN')}</p>
+          <p className="text-2xl font-bold">₹{activeRevenue.toLocaleString('en-IN')}</p>
         </div>
       </div>
 
@@ -195,56 +247,21 @@ export default async function UniversityPage({
           </div>
         </div>
 
-        <div className="col-span-2 rounded-lg border p-6 space-y-4">
+        <div className="col-span-2 rounded-lg border p-6 space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-xl font-semibold">All Batches</h3>
           </div>
-          <div className="grid grid-cols-3 gap-4">
-            {allBatches.map((batch, index) => (
-              <div key={"batch" + index} className="rounded-lg border p-4 space-y-3">
-                <div className="flex justify-between items-start">
-                  <h4 className="font-semibold">{batch.name}</h4>
-                  <Badge className={getStatusColor(batch.status)}>
-                    {batch.status.charAt(0).toUpperCase() + batch.status.slice(1)}
-                  </Badge>
-                </div>
-                <p className="text-sm text-gray-600">
-                  Stream: {batch.stream?.name}
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Users className="h-4 w-4" />
-                    {batch.number_of_students} students
-                  </div>
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Calendar className="h-4 w-4" />
-                    {batch.start_year} - {batch.end_year}
-                  </div>
-                  <div className="text-sm font-medium">
-                    Cost per Student: ₹{parseFloat(batch.effective_cost_per_student).toLocaleString('en-IN')}
-                    {batch.cost_per_student_override && ' (Override)'}
-                  </div>
-                </div>
-                {batch.notes && (
-                  <p className="text-sm text-gray-600 line-clamp-2">
-                    {batch.notes}
-                  </p>
-                )}
-                <div className="pt-2">
-                  <Link href={`/batches/${batch.id}`}>
-                    <Button variant="outline" size="sm" className="w-full">
-                      View Details
-                    </Button>
-                  </Link>
-                </div>
-              </div>
-            ))}
-            {allBatches.length === 0 && (
-              <p className="col-span-3 text-center text-gray-600">
-                No batches found. Add streams and create batches to get started.
-              </p>
-            )}
-          </div>
+          {allBatches.length === 0 ? (
+            <p className="text-center text-gray-600">
+              No batches found. Add streams and create batches to get started.
+            </p>
+          ) : (
+            <div className="space-y-8">
+              <BatchesSection title="Active Batches" batches={ongoingBatches} />
+              <BatchesSection title="Planned Batches" batches={plannedBatches} />
+              <BatchesSection title="Completed Batches" batches={completedBatches} />
+            </div>
+          )}
         </div>
 
         <div className="col-span-2 rounded-lg border p-6 space-y-4">

@@ -5,11 +5,11 @@ import { getStreamsByUniversity } from "@/lib/api/streams"
 import { notFound } from "next/navigation"
 
 
-export default async function EditStreamPage(params:  {
-    id: string
-    streamId: string
-  }) {
-  const {id, streamId} = params;
+export default async function EditStreamPage({params}: {params: Promise<{
+  id: string
+  streamId: string
+}>}) {
+  const {id, streamId} = await params;
   const streams = (await getStreamsByUniversity(id)).results;
   
   const stream = streams.find(s => s.id.toString() === streamId)

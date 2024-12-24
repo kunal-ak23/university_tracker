@@ -79,12 +79,20 @@ class UniversityViewSet(viewsets.ModelViewSet):
     ordering = ['name']
     search_fields = ['name', 'website', 'contact_email', 'contact_phone', 'address', 'accreditation']
 
+class StreamFilter(filters.FilterSet):
+    university = filters.NumberFilter(field_name='university__id')
+    
+    class Meta:
+        model = Stream
+        fields = ['university']
+
 class StreamViewSet(viewsets.ModelViewSet):
     queryset = Stream.objects.all()
     serializer_class = StreamSerializer
     permission_classes = [IsAuthenticatedAndReadOnly]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_class = StreamFilter
     ordering_fields = ['name', 'created_at', 'updated_at']
     ordering = ['name']
     search_fields = ['name', 'description', 'university__name']

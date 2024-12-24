@@ -43,7 +43,7 @@ export default function BatchesPage() {
         const url = queryString ? `/batches/?${queryString}` : '/batches/'
         
         const response = await getBatches(url)
-        setBatches(response.results || response)
+        setBatches(response.results)
       } catch (error) {
         console.error('Failed to fetch batches:', error)
       } finally {

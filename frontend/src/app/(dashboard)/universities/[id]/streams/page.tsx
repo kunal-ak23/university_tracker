@@ -9,10 +9,10 @@ import Link from "next/link"
 import { Stream } from "@/types/stream"
 
 
-export default function StreamsPage(params: {
-    id: string
-  }) {
-  const {id} = params;
+export default async function StreamsPage({params}: {params: Promise<{
+  id: string
+}>}) {
+  const {id} = await params;
   const { toast } = useToast()
   const [streams, setStreams] = useState<Stream[]>([])
 

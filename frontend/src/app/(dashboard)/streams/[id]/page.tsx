@@ -5,8 +5,10 @@ import { Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Batch } from "@/types/batch"
 
-const StreamPage = async (params: {id: string}) => {
-  const { id } = params;
+const StreamPage = async ({params}: {params: Promise<{
+  id: string
+}>}) => {
+  const { id } = await params;
   let stream
   let batches: Batch[] = []
 
