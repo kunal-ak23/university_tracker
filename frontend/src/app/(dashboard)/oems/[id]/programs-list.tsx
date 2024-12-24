@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { getPrograms } from "@/lib/api/programs"
+import { getPrograms } from "@/service/api/programs"
 import { ProgramsTable } from "@/components/programs/programs-table"
 import { Program } from "@/types/program"
 import { useToast } from "@/hooks/use-toast"

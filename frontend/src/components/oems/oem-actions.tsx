@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
-import { deleteOEM } from "@/lib/api/oems"
+import { deleteOEM } from "@/service/api/oems"
 import Link from "next/link"
 import { Edit, Trash2 } from "lucide-react"
 import {

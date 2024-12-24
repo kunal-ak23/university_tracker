@@ -1,4 +1,4 @@
-import { getProgram } from "@/lib/api/programs"
+import { getProgram } from "@/service/api/programs"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ExternalLink } from "lucide-react"

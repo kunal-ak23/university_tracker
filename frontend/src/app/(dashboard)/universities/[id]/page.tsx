@@ -1,5 +1,5 @@
-import { getUniversity } from "@/lib/api/universities"
-import { getStreamsByUniversity } from "@/lib/api/streams"
+import { getUniversity } from "@/service/api/universities"
+import { getStreamsByUniversity } from "@/service/api/streams"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ExternalLink, Plus, Users, Calendar, IndianRupee, ClipboardList } from "lucide-react"
@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { University } from "@/types/university"
 import { Batch } from "@/types/batch"
+import { getBatchesByStream } from "@/service/api/batches"
 import { Stream } from "@/types/stream"
-import { getBatchesByStream } from "@/lib/api/batches"
 
 export default async function UniversityPage({
   params,

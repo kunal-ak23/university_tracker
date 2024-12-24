@@ -1,4 +1,4 @@
-import { getBatchesByStream } from "@/lib/api/batches"
+import { getBatchesByStream } from "@/service/api/batches"
 import BatchesList from "./batches-list"
 
 export default async function BatchesPage({params}: {params: Promise<{

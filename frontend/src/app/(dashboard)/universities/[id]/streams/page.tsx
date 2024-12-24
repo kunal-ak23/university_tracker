@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Plus, Users } from "lucide-react"
-import { getStreamsByUniversity } from "@/lib/api/streams"
+import { getStreamsByUniversity } from "@/service/api/streams"
 import Link from "next/link"
 import { Stream } from "@/types/stream"
 

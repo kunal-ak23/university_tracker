@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { deleteOEM, getOEMs } from "@/lib/api/oems"
+import { deleteOEM, getOEMs } from "@/service/api/oems"
 import { OEMsTable } from "@/components/oems/oems-table"
 import { Button } from "@/components/ui/button"
 import { Plus } from "lucide-react"

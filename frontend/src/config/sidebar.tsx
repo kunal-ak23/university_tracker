@@ -6,6 +6,7 @@ import {
   Settings,
   Users,
   BookOpen,
+  Receipt,
 } from "lucide-react"
 
 export const sidebarConfig = [
@@ -38,6 +39,11 @@ export const sidebarConfig = [
     title: "Batches",
     href: "/batches",
     icon: Users,
+  },
+  {
+    title: "Billings",
+    href: "/billings",
+    icon: Receipt,
   },
   {
     title: "Settings",

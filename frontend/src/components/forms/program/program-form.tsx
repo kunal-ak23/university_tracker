@@ -10,11 +10,11 @@ import { Textarea } from "@/components/ui/textarea"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
 import { Program, DurationUnit } from "@/types/program"
-import { createProgram, updateProgram } from "@/lib/api/programs"
+import { createProgram, updateProgram } from "@/service/api/programs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useEffect, useState } from "react"
 import { OEM } from "@/types/oem"
-import { getOEMs } from "@/lib/api/oems"
+import { getOEMs } from "@/service/api/oems"
 
 const programFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -96,6 +96,7 @@ export function ProgramForm({ mode = 'create', program, providerId }: ProgramFor
       duration_unit: program?.duration_unit as DurationUnit ?? "Years",
       description: program?.description ?? "",
       prerequisites: program?.prerequisites ?? "",
+      // @ts-ignore
       provider_id: program?.provider?.id ?? providerId ?? undefined,
     },
   })

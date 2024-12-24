@@ -1,5 +1,5 @@
-import { getStream } from "@/lib/api/streams"
-import { getBatchesByStream } from "@/lib/api/batches"
+import { getStream } from "@/service/api/streams"
+import { getBatchesByStream } from "@/service/api/batches"
 import Link from "next/link"
 import { Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -22,7 +22,7 @@ const StreamPage = async ({params}: {params: Promise<{
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-3xl font-bold tracking-tight">{stream.name}</h2>
+        <h2 className="text-3xl font-bold tracking-tight">{stream?.name}</h2>
       </div>
 
       <div className="grid grid-cols-2 gap-6">
@@ -31,11 +31,11 @@ const StreamPage = async ({params}: {params: Promise<{
           <dl className="space-y-2">
             <div className="flex justify-between">
               <dt className="font-medium">Duration</dt>
-              <dd>{stream.duration} {stream.duration_unit}</dd>
+              <dd>{stream?.duration} {stream?.duration_unit}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="font-medium">Description</dt>
-              <dd>{stream.description || "No description provided"}</dd>
+              <dd>{stream?.description || "No description provided"}</dd>
             </div>
           </dl>
         </div>

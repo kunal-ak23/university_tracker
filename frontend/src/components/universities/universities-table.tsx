@@ -6,7 +6,7 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2 } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { deleteUniversity } from "@/lib/api/universities"
+import { deleteUniversity } from "@/service/api/universities"
 import { useToast } from "@/hooks/use-toast"
 import { ColumnDef, Row } from "@tanstack/react-table"
 

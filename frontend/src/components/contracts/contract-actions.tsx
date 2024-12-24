@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
-import { deleteContract, updateContract } from "@/lib/api/contracts"
+import { deleteContract, updateContract } from "@/service/api/contracts"
 import Link from "next/link"
 import { Archive, Edit, Trash2, CheckCircle } from "lucide-react"
 import {

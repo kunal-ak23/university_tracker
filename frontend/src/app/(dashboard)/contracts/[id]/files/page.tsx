@@ -1,4 +1,4 @@
-import { getContract } from "@/lib/api/contracts"
+import { getContract } from "@/service/api/contracts"
 import { notFound } from "next/navigation"
 
 import { ContractFilesForm } from "@/components/contracts/contract-files-form"

@@ -1,6 +1,6 @@
 'use server'
 
-import { updateContract } from "@/lib/api/contracts"
+import { updateContract } from "@/service/api/contracts"
 import { ContractFormData } from "@/types/contract"
 
 export async function handleUpdateContract({ id, formData }: { id: string, formData: ContractFormData }) {
@@ -14,9 +14,8 @@ export async function handleUpdateContract({ id, formData }: { id: string, formD
       programs_ids: formData.programs_ids
     }
 
-    console.log(data)
-    
-    await updateContract(id, data)
+    // @ts-ignore
+    await updateContract(id, data as any)
   } catch (error) {
     console.error('Failed to update contract:', error)
     throw error

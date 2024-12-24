@@ -1,4 +1,4 @@
-import { getOEM } from "@/lib/api/oems"
+import { getOEM } from "@/service/api/oems"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { ExternalLink, Plus } from "lucide-react"

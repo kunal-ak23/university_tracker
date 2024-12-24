@@ -10,14 +10,14 @@ import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
 import { FileUpload } from "@/components/ui/file-upload"
 import { useState, useEffect } from "react"
-import { createContract, updateContract, deleteContract, archiveContract } from "@/lib/api/contracts"
+import { createContract, updateContract, deleteContract, archiveContract } from "@/service/api/contracts"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { MultiSelect } from "@/components/ui/multi-select"
-import { getUniversities, getUniversityStreams } from "@/lib/api/universities"
-import { getOEMs, getOEMPrograms } from "@/lib/api/oems"
-import { getTaxRates, TaxRate } from "@/lib/api/tax"
+import { getUniversities, getUniversityStreams } from "@/service/api/universities"
+import { getOEMs, getOEMPrograms } from "@/service/api/oems"
+import { getTaxRates, TaxRate } from "@/service/api/tax"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
-import { Contract } from "@/types/contract"
+import { Contract, Stream } from "@/types/contract"
 import { University } from "@/types/university"
 import { OEM } from "@/types/oem"
 
@@ -84,7 +84,7 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
       cost_per_student: contract?.cost_per_student?.toString() ?? "",
       oem_transfer_price: contract?.oem_transfer_price?.toString() ?? "",
       tax_rate: contract?.tax_rate?.toString() ?? "",
-      status: contract?.status ?? "planned",
+      status: contract?.status as "active" | "planned" | "inactive" | "archived" | undefined ?? "planned",
       start_date: contract?.start_date ?? "",
       end_date: contract?.end_date ?? "",
       programs: contract?.programs?.map(cp => cp.id.toString()) ?? [],
@@ -124,16 +124,17 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
       if (mode === 'edit' && contract) {
         try {
           setSelectedPrograms(contract.programs.map(cp => cp.id.toString()));
-          setSelectedStreams(contract.streams.map(s => s.id))
+          setSelectedStreams(contract.streams.map(s => s.id.toString()))
           
           if (contract.oem?.id) {
-            const programs = await getOEMPrograms(contract.oem.id)
+            const programs = await getOEMPrograms(contract.oem.id.toString())
             console.log('programs', programs);
             setAvailablePrograms(programs.results)
           }
           
           if (contract.university?.id) {
-            const streams = await getUniversityStreams(contract.university.id)
+            const streams = await getUniversityStreams(contract.university.id.toString())
+            // @ts-ignore
             setAvailableStreams(streams.results)
           }
         } catch (error) {
@@ -154,7 +155,8 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
   const onUniversityChange = async (universityId: string) => {
     try {
       const streams = await getUniversityStreams(universityId)
-      setAvailableStreams(streams)
+      // @ts-ignore
+      setAvailableStreams(streams.results)
       setSelectedStreams([])
       form.setValue('streams', [])
     } catch (error) {
@@ -203,12 +205,13 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
           }
           if (key === 'streams') {
             const currentStreams = val as string[]
-            const originalStreams = contract?.streams?.map(s => s.id) || []
+            const originalStreams = contract?.streams?.map(s => s.id.toString()) || []
             return !areArraysEqual(currentStreams.sort(), originalStreams.sort())
           }
           if (key === 'cost_per_student' || key === 'oem_transfer_price') {
             return val?.toString() !== contract?.[key]?.toString()
           }
+          // @ts-ignore
           return val !== contract?.[key]?.toString()
         })
 
@@ -442,8 +445,8 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
                         label: program.name,
                         value: program.id.toString()
                       }))}
-                      selected={selectedPrograms.map(id => id.toString())}
-                      onChange={(values) => {
+                      value={field.value}
+                      onValueChange={(values) => {
                         setSelectedPrograms(values)
                         field.onChange(values)
                       }}
@@ -506,8 +509,8 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
                         label: stream.name,
                         value: stream.id.toString()
                       }))}
-                      selected={selectedStreams.map(id => id.toString())}
-                      onChange={(values) => {
+                      value={field.value}
+                      onValueChange={(values) => {
                         setSelectedStreams(values)
                         field.onChange(values)
                       }}

@@ -1,5 +1,5 @@
-import { getContract } from "@/lib/api/contracts"
-import { formatCurrency, formatDate } from "@/lib/utils"
+import { getContract } from "@/service/api/contracts"
+import { formatCurrency, formatDate } from "@/service/utils"
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -28,7 +28,7 @@ params: Promise<{ id: string }>;
         <h2 className="text-3xl font-bold tracking-tight">{contract.name}</h2>
         <ContractActions 
           contractId={id} 
-          status={contract.status}
+          status={contract.status as 'planned' | 'active' | 'inactive' | 'archived'}
         />
       </div>
 
@@ -57,11 +57,11 @@ params: Promise<{ id: string }>;
             </div>
             <div className="flex justify-between">
               <dt className="font-medium">Start Date</dt>
-              <dd>{formatDate(contract.start_date)}</dd>
+              <dd>{formatDate(contract?.start_date || '')}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="font-medium">End Date</dt>
-              <dd>{formatDate(contract.end_date)}</dd>
+              <dd>{formatDate(contract?.end_date || '')}</dd>
             </div>
           </dl>
         </div>
@@ -71,13 +71,13 @@ params: Promise<{ id: string }>;
           <dl className="space-y-2">
             <div className="flex justify-between">
               <dt className="font-medium">Name</dt>
-              <dd>{contract.oem.name}</dd>
+              <dd>{contract?.oem?.name}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="font-medium">Website</dt>
               <dd>
-                <a href={contract.oem.website} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                  {contract.oem.website}
+                <a href={contract?.oem?.website || ''} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                  {contract?.oem?.website || ''}
                 </a>
               </dd>
             </div>

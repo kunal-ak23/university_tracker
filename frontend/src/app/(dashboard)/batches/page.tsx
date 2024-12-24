@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { getBatches } from "@/lib/api/batches"
+import { getBatches } from "@/service/api/batches"
 import { BatchesTable } from "@/components/batches/batches-table"
 import { Button } from "@/components/ui/button"
 import { Plus } from "lucide-react"

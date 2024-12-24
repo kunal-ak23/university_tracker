@@ -10,9 +10,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
 import { OEM } from "@/types/oem"
-import { createOEM, updateOEM } from "@/lib/api/oems"
+import { createOEM, updateOEM } from "@/service/api/oems"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { getEligiblePOCs, User } from "@/lib/api/users"
+import { getEligiblePOCs, User } from "@/service/api/users"
 import { useState, useEffect } from "react"
 
 const oemFormSchema = z.object({

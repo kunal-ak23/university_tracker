@@ -1,6 +1,6 @@
 "use client"
 
-import { getBatch } from "@/lib/api/batches"
+import { getBatch } from "@/service/api/batches"
 import { notFound } from "next/navigation"
 import { BatchForm } from "@/components/batches/batch-form"
 

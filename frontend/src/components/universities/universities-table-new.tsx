@@ -15,7 +15,7 @@ import Link from "next/link"
 import { useState } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { useRouter } from "next/navigation"
-import { deleteUniversity } from "@/lib/api/universities"
+import { deleteUniversity } from "@/service/api/universities"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 import {
   Tooltip,

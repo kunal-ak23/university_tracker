@@ -5,7 +5,7 @@ import { ModeToggle } from "@/components/shared/mode-toggle"
 import Image from "next/image"
 import { useTheme } from "next-themes"
 import { Righteous } from "next/font/google"
-import { cn } from "@/lib/utils"
+import { cn } from "@/service/utils"
 import { Menu } from "lucide-react"
 import { Button } from "@/components/ui/button"
 

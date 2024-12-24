@@ -5,7 +5,7 @@ import { ThemeProvider } from "@/components/shared/theme-provider"
 import { auth } from "@/auth"
 import { SessionProvider } from "next-auth/react"
 import { Toaster } from "@/components/ui/toaster"
-import { cn } from '@/lib/utils'
+import { cn } from '@/service/utils'
 
 const inter = Inter({ subsets: ["latin"] })
 const righteous = Righteous({ weight: '400', subsets: ['latin'] })

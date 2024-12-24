@@ -6,10 +6,10 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2, Archive } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { archiveContract, deleteContract } from "@/lib/api/contracts"
+import { archiveContract, deleteContract } from "@/service/api/contracts"
 import { useToast } from "@/hooks/use-toast"
 import { Badge } from "@/components/ui/badge"
-import { formatDate } from "@/lib/utils"
+import { formatDate } from "@/service/utils"
 import { ColumnDef, Row } from "@tanstack/react-table"
 
 interface ContractsTableProps {

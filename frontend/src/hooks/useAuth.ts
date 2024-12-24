@@ -1,7 +1,7 @@
 "use client"
 
 import { signIn, signOut, useSession } from "next-auth/react";
-import { apiClient } from "@/lib/api/apiClient";
+import { apiClient } from "@/service/api/apiClient";
 import { DEFAULT_REDIRECT_URL } from "@/routes";
 
 export function useAuth() {

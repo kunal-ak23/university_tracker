@@ -1,4 +1,4 @@
-import { getOEM } from "@/lib/api/oems"
+import { getOEM } from "@/service/api/oems"
 import { OEMForm } from "@/components/forms/oem/oem-form"
 import { notFound } from "next/navigation"
 

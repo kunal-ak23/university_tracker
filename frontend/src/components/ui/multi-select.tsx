@@ -3,123 +3,97 @@
 "use client"
 
 import * as React from "react";
-import { X } from "lucide-react";
+import { Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/service/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+} from "@/components/ui/command";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
-import { Command, CommandGroup, CommandItem } from "@/components/ui/command";
-import { Command as CommandPrimitive } from "cmdk";
 
-type Option = {
-  label: string;
-  value: string;
-};
-
-interface MultiSelectProps {
-  options: Option[];
-  selected: string[];
-  onChange: (values: string[]) => void;
+export interface MultiSelectProps {
+  options: { label: string; value: string }[];
+  value?: string[];
+  onValueChange: (value: string[]) => void;
   placeholder?: string;
+  className?: string;
   disabled?: boolean;
 }
 
 export function MultiSelect({
   options,
-  selected,
-  onChange,
-  placeholder = "Select items...",
+  value = [],
+  onValueChange,
+  placeholder = "Select items",
+  className,
   disabled = false,
 }: MultiSelectProps) {
-  const inputRef = React.useRef<HTMLInputElement>(null);
   const [open, setOpen] = React.useState(false);
-  const [inputValue, setInputValue] = React.useState("");
 
-  const handleUnselect = (value: string) => {
-    onChange(selected.filter((s) => s !== value));
-  };
-
-  const handleKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
-    const input = inputRef.current;
-    if (input) {
-      if (e.key === "Delete" || e.key === "Backspace") {
-        if (input.value === "" && selected.length > 0) {
-          onChange(selected.slice(0, -1));
-        }
-      }
-      if (e.key === "Escape") {
-        input.blur();
-      }
-    }
-  }, [selected, onChange]);
-
-  const selectables = options.filter((option) => !selected.includes(option.value));
+  const selectedLabels = value
+    .map(v => options.find(opt => opt.value === v)?.label)
+    .filter(Boolean);
 
   return (
-    <Command onKeyDown={handleKeyDown} className="overflow-visible bg-transparent">
-      <div
-        className={`group rounded-md border border-input px-3 py-2 text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-      >
-        <div className="flex gap-1 flex-wrap">
-          {selected.map((value) => {
-            const option = options.find((opt) => opt.value === value);
-            if (!option) return null;
-            return (
-              <Badge key={value} variant="secondary">
-                {option.label}
-                <button
-                  className="ml-1 ring-offset-background rounded-full outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      handleUnselect(value);
-                    }
-                  }}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  onClick={() => handleUnselect(value)}
-                >
-                  <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                </button>
-              </Badge>
-            );
-          })}
-          <CommandPrimitive.Input
-            ref={inputRef}
-            value={inputValue}
-            onValueChange={setInputValue}
-            onBlur={() => setOpen(false)}
-            onFocus={() => setOpen(true)}
-            placeholder={disabled ? placeholder : selected.length === 0 ? placeholder : undefined}
-            disabled={disabled}
-            className="ml-2 bg-transparent outline-none placeholder:text-muted-foreground flex-1"
-          />
-        </div>
-      </div>
-      <div className="relative mt-2">
-        {open && selectables.length > 0 ? (
-          <div className="absolute w-full z-10 top-0 rounded-md border bg-popover text-popover-foreground shadow-md outline-none animate-in">
-            <CommandGroup className="h-full overflow-auto">
-              {selectables.map((option) => {
-                return (
-                  <CommandItem
-                    key={option.value}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }}
-                    onSelect={() => {
-                      setInputValue("");
-                      onChange([...selected, option.value]);
-                    }}
-                    className={"cursor-pointer"}
-                  >
-                    {option.label}
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
+    <Popover open={disabled ? false : open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={cn("w-full justify-between", className)}
+          disabled={disabled}
+        >
+          <div className="flex gap-1 flex-wrap">
+            {selectedLabels.length > 0 ? (
+              selectedLabels.map((label) => (
+                <Badge variant="secondary" key={label}>
+                  {label}
+                </Badge>
+              ))
+            ) : (
+              <span className="text-muted-foreground">{placeholder}</span>
+            )}
           </div>
-        ) : null}
-      </div>
-    </Command>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-full p-0">
+        <Command>
+          <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} />
+          <CommandEmpty>No item found.</CommandEmpty>
+          <CommandGroup className="max-h-64 overflow-auto">
+            {options.map((option) => (
+              <CommandItem
+                key={option.value}
+                onSelect={() => {
+                  const newValue = value.includes(option.value)
+                    ? value.filter(v => v !== option.value)
+                    : [...value, option.value]
+                  onValueChange(newValue)
+                }}
+              >
+                <Check
+                  className={cn(
+                    "mr-2 h-4 w-4",
+                    value.includes(option.value) ? "opacity-100" : "opacity-0"
+                  )}
+                />
+                {option.label}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }

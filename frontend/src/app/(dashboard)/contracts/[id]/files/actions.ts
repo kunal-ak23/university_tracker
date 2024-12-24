@@ -1,6 +1,6 @@
 'use server'
 
-import { apiFetch, postFormData } from "@/lib/api/fetch"
+import { apiFetch, postFormData } from "@/service/api/fetch"
 
 export async function handleContractFileUpload(formData: FormData) {
     console.log(formData);

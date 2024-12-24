@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Plus } from "lucide-react"
 import { University } from "@/types/university"
-import { getUniversities } from "@/lib/api/universities"
+import { getUniversities } from "@/service/api/universities"
 import { UniversitiesTable } from "@/components/universities/universities-table"
 
 export default function UniversitiesPage() {

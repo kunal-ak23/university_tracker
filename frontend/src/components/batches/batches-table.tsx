@@ -6,7 +6,7 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Edit, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
-import { formatDate } from "@/lib/utils"
+import { formatDate } from "@/service/utils"
 import { Batch } from "@/types/batch"
 import { ColumnDef, Row } from "@tanstack/react-table"
 

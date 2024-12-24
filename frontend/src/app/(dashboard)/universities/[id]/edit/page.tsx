@@ -1,4 +1,4 @@
-import { getUniversity } from "@/lib/api/universities"
+import { getUniversity } from "@/service/api/universities"
 import { UniversityForm } from "@/components/forms/university/university-form"
 import { notFound } from "next/navigation"
 

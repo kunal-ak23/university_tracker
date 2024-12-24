@@ -3,9 +3,9 @@
 import { useEffect, useState, use } from "react"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
-import { Batch } from "@/lib/api/batches"
-import { getBatch } from "@/lib/api/batches"
+import { getBatch } from "@/service/api/batches"
 import { BatchForm } from "@/components/batches/batch-form"
+import { Batch } from "@/types/batch"
 
 export default function EditBatchPage({
   params,
@@ -22,7 +22,7 @@ export default function EditBatchPage({
     async function fetchBatch() {
       try {
         setIsLoading(true)
-        const fetchedBatch = await getBatch(Number(id))
+        const fetchedBatch = await getBatch(id)
         setBatch(fetchedBatch)
       } catch (error) {
         console.error('Failed to fetch batch:', error)

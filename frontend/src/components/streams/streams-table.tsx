@@ -15,7 +15,7 @@ import Link from "next/link"
 import { useState } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { useRouter } from "next/navigation"
-import { deleteStream } from "@/lib/api/streams"
+import { deleteStream } from "@/service/api/streams"
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog"
 
 interface StreamsTableProps {

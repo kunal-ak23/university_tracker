@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { ContractsTable } from "@/components/contracts/contracts-table"
 import { Button } from "@/components/ui/button"
-import { getContracts } from "@/lib/api/contracts"
+import { getContracts } from "@/service/api/contracts"
 import { Plus } from "lucide-react"
 import Link from "next/link"
 import { Contract } from "@/types/contract"

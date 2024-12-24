@@ -1,4 +1,4 @@
-import { getProgram } from "@/lib/api/programs"
+import { getProgram } from "@/service/api/programs"
 import { ProgramForm } from "@/components/forms/program/program-form"
 import { notFound } from "next/navigation"
 

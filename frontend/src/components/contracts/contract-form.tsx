@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Contract, ContractFormData, contractFormSchema, Provider, Program, Stream, University } from "@/types/contract"
+import { Contract, ContractFormData, contractFormSchema, OEM, Program, Stream, University } from "@/types/contract"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { Input } from "@/components/ui/input"
@@ -24,14 +24,14 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { useRouter } from "next/navigation"
 import { MultiSelect } from "@/components/ui/multi-select"
-import { getProgramsByOem } from "@/lib/api/programs"
-import { getStreamsByUniversity } from "@/lib/api/streams"
+import { getProgramsByOem } from "@/service/api/programs"
+import { getStreamsByUniversity } from "@/service/api/streams"
 import { useToast } from "@/hooks/use-toast"
 
 
 interface ContractFormProps {
   contract?: Contract
-  oems: Provider[]
+  oems: OEM[]
   universities: University[]
   initialStreams: Stream[]
   initialPrograms: Program[]
@@ -63,9 +63,9 @@ export function ContractForm({
       start_date: contract?.start_date ?? "",
       end_date: contract?.end_date ?? "",
       notes: contract?.notes ?? "",
-      status: contract?.status ?? "pending",
+      status: contract?.status as "active" | "pending" | "expired" | undefined ?? "pending",
       tax_rate: contract?.tax_rate ?? 1,
-      oem_id: contract?.oem.id ?? 1,
+      oem_id: contract?.oem?.id ?? 1,
       university_id: contract?.university?.id ?? 1,
       streams_ids: contract?.streams.map(s => s.id) ?? [],
       programs_ids: contract?.programs.map(p => p.id) ?? [],
@@ -78,7 +78,7 @@ export function ContractForm({
     
     try {
       const programs = await getProgramsByOem(oemId)
-      setAvailablePrograms(programs)
+      setAvailablePrograms(programs.results)
     } catch (error) {
       console.error('Failed to load programs:', error)
     }
@@ -89,8 +89,9 @@ export function ContractForm({
     try {
       form.setValue('university_id', universityId)
       form.setValue('streams_ids', [])
-      const streams = await getStreamsByUniversity(universityId)
-      setAvailableStreams(streams)
+      const streams = await getStreamsByUniversity(universityId.toString())
+      // @ts-ignore
+      setAvailableStreams(streams.results as Stream[])
     } catch (error) {
       console.error('Failed to load streams:', error)
     } finally {
@@ -103,11 +104,11 @@ export function ContractForm({
 
     if (contract) {
       const loadInitialData = async () => {
-        if (contract.oem.id) {
+        if (contract.oem?.id) {
           try {
             const programs = await getProgramsByOem(contract.oem.id)
             if (mounted) {
-              setAvailablePrograms(programs)
+              setAvailablePrograms(programs.results)
             }
           } catch (error) {
             console.error(error)
@@ -235,7 +236,7 @@ export function ContractForm({
                   label: stream.name,
                   value: String(stream.id)
                 }))}
-                defaultValue={field.value?.map(String) || []}
+                value={field.value?.map(String) || []}
                 onValueChange={(values) => field.onChange(values.map(Number))}
                 placeholder="Select streams"
               />
@@ -255,7 +256,7 @@ export function ContractForm({
                   label: program.name,
                   value: String(program.id)
                 }))}
-                defaultValue={field.value?.map(String) || []}
+                value={field.value?.map(String) || []}
                 onValueChange={(values) => field.onChange(values.map(Number))}
                 placeholder="Select programs"
               />

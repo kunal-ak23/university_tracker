@@ -1,5 +1,5 @@
-import { getBatch } from "@/lib/api/batches"
-import { getContract } from "@/lib/api/contracts"
+import { getBatch } from "@/service/api/batches"
+import { getContract } from "@/service/api/contracts"
 import BatchDetail from "./batch-detail"
 
 const BatchDetailPage = async ({params}:  {params: Promise<{
