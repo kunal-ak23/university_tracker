@@ -8,11 +8,14 @@ import { Pencil, IndianRupee, Calendar, Receipt } from "lucide-react"
 export default async function BillingPage({
   params,
 }: {
-  params: { id: string }
+  params: Promise<{ id: string }>
 }) {
   let billing;
+  const {id} = await params
   try {
-    billing = await getBilling(params.id)
+    billing = await getBilling(id)
+    console.log(billing);
+
   } catch (error) {
     console.error('Error fetching billing:', error)
     notFound()
@@ -23,7 +26,7 @@ export default async function BillingPage({
       <div className="flex items-center justify-between">
         <h2 className="text-3xl font-bold tracking-tight">{billing.name}</h2>
         <div className="flex gap-4">
-          <Link href={`/billings/${params.id}/edit`}>
+          <Link href={`/billings/${id}/edit`}>
             <Button>
               <Pencil className="mr-2 h-4 w-4" />
               Edit Billing
@@ -68,13 +71,9 @@ export default async function BillingPage({
       <div className="rounded-lg border p-6 space-y-4">
         <h3 className="text-xl font-semibold">Included Batches</h3>
         <div className="grid grid-cols-3 gap-4">
-          {billing.batches.map((batch, index) => (
+          {billing.batch_snapshots.map((batch, index) => (
             <div key={"batch-" + index} className="rounded-lg border p-4 space-y-2">
-              <h4 className="font-semibold">{batch.name}</h4>
-              <div className="flex items-center gap-2 text-sm text-gray-600">
-                <Calendar className="h-4 w-4" />
-                <span>{batch.start_year} - {batch.end_year}</span>
-              </div>
+              <h4 className="font-semibold">{batch.batch_name}</h4>
               <Link href={`/batches/${batch.id}`}>
                 <Button variant="ghost" size="sm" className="w-full">
                   View Batch

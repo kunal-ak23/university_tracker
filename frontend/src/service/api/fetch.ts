@@ -5,7 +5,8 @@
 import { auth } from "@/auth"
 import { cookies } from "next/headers"
 import { signOut } from "@/auth"
-import { redirect } from "next/navigation";
+
+
 export async function apiFetch(
   endpoint: string,
   options: RequestInit = {}
@@ -14,7 +15,6 @@ export async function apiFetch(
   
   // @ts-ignore 
   if (!session?.accessToken && !session?.refreshToken) {
-    redirect('/login');
     throw new Error('No access token found')
   }
 
@@ -77,7 +77,6 @@ export async function apiFetch(
       })
     } catch (error) {
       signOut();
-      redirect('/login');
       throw error
     }
   }

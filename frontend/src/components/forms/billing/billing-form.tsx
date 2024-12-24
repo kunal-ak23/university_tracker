@@ -13,6 +13,7 @@ import { MultiSelect } from "@/components/ui/multi-select"
 import { Textarea } from "@/components/ui/textarea"
 import { Billing } from "@/types/billing"
 import { createBilling, updateBilling } from "@/service/api/billings"
+import {Batch} from "@/types/batch";
 
 const billingFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -32,7 +33,7 @@ export function BillingForm({ mode = 'create', billing, availableBatches }: Bill
   const router = useRouter()
   const { toast } = useToast()
   const [selectedBatches, setSelectedBatches] = useState<string[]>(
-    billing?.batches.map(b => typeof b === 'string' ? b : b.id.toString()) || []
+    billing?.batches.map(b => typeof b === 'string' ? b : b.toString()) || []
   )
 
   const form = useForm<BillingFormValues>({

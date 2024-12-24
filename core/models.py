@@ -234,7 +234,8 @@ class Batch(BaseModel):
 
 
 class BatchSnapshot(BaseModel):
-    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='original_batch')
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='snapshots')
+    billing = models.ForeignKey('Billing', on_delete=models.CASCADE, related_name='batch_snapshots', null=True, blank=True)
     number_of_students = models.PositiveIntegerField()
     cost_per_student = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
@@ -264,56 +265,42 @@ class BatchSnapshot(BaseModel):
 class Billing(BaseModel):
     name = models.CharField(max_length=255)
     batches = models.ManyToManyField(Batch, related_name='billings')
-    batch_snapshots = models.ManyToManyField(BatchSnapshot, related_name='snapshots', blank=True)
     notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return self.name
 
     @property
     def total_amount(self):
-        """Calculate total amount from batch snapshots"""
-        total = Decimal('0.00')
-        for snapshot in self.batch_snapshots.all():
-            students = Decimal(str(snapshot.number_of_students))
-            student_cost = snapshot.cost_per_student * students
-            tax_amount = student_cost * (snapshot.tax_rate / Decimal('100.00'))
-            total += student_cost + tax_amount
-        return total
+        return sum(snapshot.number_of_students * snapshot.cost_per_student for snapshot in self.batch_snapshots.all())
 
     @property
     def total_payments(self):
-        """Calculate total payments from completed payments"""
-        return self.payments.filter(status='completed').aggregate(
-            total=models.Sum('amount'))['total'] or Decimal('0.00')
+        return sum(
+            payment.amount 
+            for invoice in self.invoices.all()
+            for payment in invoice.payments.all()
+        )
 
     @property
     def balance_due(self):
-        """Calculate balance due"""
         return self.total_amount - self.total_payments
 
     @property
     def total_oem_transfer_amount(self):
-        """Calculate total OEM transfer amount from batch snapshots"""
-        total = Decimal('0.00')
-        for snapshot in self.batch_snapshots.all():
-            students = Decimal(str(snapshot.number_of_students))
-            total += snapshot.oem_transfer_price * students
-        return total
+        return sum(snapshot.number_of_students * snapshot.oem_transfer_price for snapshot in self.batch_snapshots.all())
 
     def add_batch_snapshot(self, batch):
         snapshot = BatchSnapshot.objects.create(
             batch=batch,
+            billing=self,
             number_of_students=batch.number_of_students,
             cost_per_student=batch.get_cost_per_student(),
             tax_rate=batch.get_tax_rate().rate,
             oem_transfer_price=batch.get_oem_transfer_price(),
             status=batch.status
         )
-        self.batch_snapshots.add(snapshot)
         return snapshot
-
-    def __str__(self):
-        if self.batches.exists():
-            return f'Billing for {self.name}'
-        return 'Billing (no batches assigned yet)'
 
 
 class Invoice(BaseModel):

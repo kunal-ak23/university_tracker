@@ -4,18 +4,20 @@ import { BillingForm } from "@/components/forms/billing/billing-form"
 import { notFound } from "next/navigation"
 
 export default async function EditBillingPage({
-  params,
+  params
 }: {
-  params: { id: string }
+  params: Promise<{ id: string }>
 }) {
   let billing;
+  const {id} = await params;
   try {
     const [billingData, batchesData] = await Promise.all([
-      getBilling(params.id),
+      getBilling(id),
       getBatches()
     ])
     billing = billingData
     const batches = batchesData.results
+    console.log(billing, batches);
 
     return (
       <div className="space-y-6">

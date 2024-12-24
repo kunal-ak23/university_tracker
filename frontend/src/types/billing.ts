@@ -2,15 +2,24 @@ import { Batch } from "./batch"
 
 export interface BatchSnapshot {
   // We'll expand this later as needed
-  id: string
-  batch_id: string
-  // Add other snapshot fields as needed
+  id: number
+  batch: number
+  batch_name: string
+  batch_stream: string
+  batch_contract: string
+  number_of_students: number
+  cost_per_student: string
+  tax_rate: string
+  oem_transfer_price: string
+  status: string
+  created_at: string
+  updated_at: string
 }
 
 export interface Billing {
   id: string
   name: string
-  batches: string[] | Batch[]  // Can be either IDs or full batch objects
+  batches: number[] | Batch[]  // Can be either IDs or full batch objects
   batch_snapshots: BatchSnapshot[]
   notes?: string
   total_amount: string

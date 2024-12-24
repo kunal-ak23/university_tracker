@@ -29,26 +29,13 @@ def calculate_total_amount(sender, instance, **kwargs):
             return
         updating_instance = True
         try:
-            total_amount = 0
             # Clear previous batch_snapshots
-            instance.batch_snapshots.clear()
+            instance.batch_snapshots.all().delete()
             
+            # Create new snapshots for each batch
             for batch in instance.batches.all():
-                # Get effective cost per student and tax rate for this batch
-                cost_per_student = batch.get_cost_per_student()
-                tax_rate = batch.get_tax_rate().rate / 100  # Convert percentage to decimal
-                
-                # Calculate amount for this batch
-                batch_amount = batch.number_of_students * cost_per_student * (1 + tax_rate)
-                total_amount += batch_amount
-                
-                # Create snapshot
-                instance.batch_snapshots.add(instance.add_batch_snapshot(batch))
+                instance.add_batch_snapshot(batch)
 
-            if instance.batches.exists():
-                instance.total_amount = total_amount
-                instance.balance_due = instance.total_amount - instance.total_payments
-                instance.save()
         finally:
             updating_instance = False
 

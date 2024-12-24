@@ -121,12 +121,16 @@ class BatchSerializer(serializers.ModelSerializer):
         ]
 
 class BatchSnapshotSerializer(serializers.ModelSerializer):
+    batch_name = serializers.CharField(source='batch.name', read_only=True)
+    batch_stream = serializers.CharField(source='batch.stream.name', read_only=True)
+    batch_contract = serializers.CharField(source='batch.contract.name', read_only=True)
+
     class Meta:
         model = BatchSnapshot
         fields = [
-            'id', 'batch', 'number_of_students',
-            'cost_per_student', 'tax_rate', 'oem_transfer_price',
-            'status', 'created_at', 'updated_at'
+            'id', 'batch', 'batch_name', 'batch_stream', 'batch_contract',
+            'number_of_students', 'cost_per_student', 'tax_rate', 
+            'oem_transfer_price', 'status', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
 

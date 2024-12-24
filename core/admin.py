@@ -36,21 +36,36 @@ class PaymentInline(admin.TabularInline):
 @admin.register(Billing)
 class BillingAdmin(admin.ModelAdmin):
     inlines = [InvoiceInline]
-    readonly_fields = ['total_amount', 'created_at', 'updated_at', 'total_payments', 'balance_due', 'created_at', 'updated_at', 'version']
-    list_display = ['id', 'name', 'total_amount', 'total_payments', 'balance_due', 'created_at', 'updated_at', 'add_invoice_link']
+    list_display = ['id', 'name', 'get_total_amount', 'get_total_payments', 'get_balance_due', 'created_at', 'updated_at', 'add_invoice_link']
     search_fields = ['id', 'name', 'notes']
     list_filter = ['created_at', 'updated_at']
     actions = [duplicate_billing]
+    readonly_fields = ['get_total_amount', 'get_total_payments', 'get_balance_due', 'get_total_oem_transfer_amount', 'created_at', 'updated_at', 'version']
+    fields = ['name', 'batches', 'notes', 'get_total_amount', 'get_total_payments', 'get_balance_due', 'get_total_oem_transfer_amount']
+
+    def get_total_amount(self, obj):
+        return obj.total_amount
+    get_total_amount.short_description = 'Total Amount'
+
+    def get_total_payments(self, obj):
+        return obj.total_payments
+    get_total_payments.short_description = 'Total Payments'
+
+    def get_balance_due(self, obj):
+        return obj.balance_due
+    get_balance_due.short_description = 'Balance Due'
+
+    def get_total_oem_transfer_amount(self, obj):
+        return obj.total_oem_transfer_amount
+    get_total_oem_transfer_amount.short_description = 'Total OEM Transfer Amount'
 
     def get_readonly_fields(self, request, obj=None):
-        logger.info(obj)
-        if obj is None:  # If editing an existing object
-            return self.readonly_fields
-        return self.readonly_fields + ['batch_snapshots']
+        if obj is None:  # If creating a new object
+            return ['get_total_amount', 'get_total_payments', 'get_balance_due', 'get_total_oem_transfer_amount', 'created_at', 'updated_at', 'version']
+        return self.readonly_fields
 
     def get_exclude(self, request, obj=None):
         if obj is None:
-            logger.info('Excluding batch_snapshot')
             return ['batch_snapshots']
         return []
 
