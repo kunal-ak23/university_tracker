@@ -29,12 +29,13 @@ class InvoiceInline(admin.TabularInline):
 
 class PaymentInline(admin.TabularInline):
     model = Payment
-    readonly_fields = [field.name for field in Payment._meta.fields]
     extra = 0
+    fields = ['amount', 'payment_date', 'payment_method', 'status', 'transaction_reference', 'notes']
+    readonly_fields = ['created_at', 'updated_at']
 
 @admin.register(Billing)
 class BillingAdmin(admin.ModelAdmin):
-    inlines = [InvoiceInline, PaymentInline]
+    inlines = [InvoiceInline]
     readonly_fields = ['total_amount', 'created_at', 'updated_at', 'total_payments', 'balance_due', 'created_at', 'updated_at', 'version']
     list_display = ['id', 'name', 'total_amount', 'total_payments', 'balance_due', 'created_at', 'updated_at', 'add_invoice_link']
     search_fields = ['id', 'name', 'notes']
@@ -58,13 +59,6 @@ class BillingAdmin(admin.ModelAdmin):
         return mark_safe(f'<a href="{url}" class="button" onclick="return showAddAnotherPopup(this);">Add Invoice</a>')
     add_invoice_link.short_description = 'Add Invoice'
     add_invoice_link.allow_tags = True
-
-@admin.register(Payment)
-class PaymentAdmin(admin.ModelAdmin):
-    readonly_fields = ['amount', 'payment_date', 'payment_method', 'status', 'transaction_reference', 'created_at', 'updated_at', 'version']
-    list_display = ['id', 'billing', 'amount', 'payment_date', 'payment_method', 'status', 'created_at', 'updated_at']
-    search_fields = ['id', 'billing__id', 'transaction_reference']
-    list_filter = ['payment_date', 'status', 'created_at', 'updated_at']
 
 @admin.register(OEM)
 class OEMAdmin(admin.ModelAdmin):
@@ -205,6 +199,7 @@ admin.site.register(Batch, BatchAdmin)
 
 @admin.register(Invoice)
 class InvoiceAdmin(admin.ModelAdmin):
+    inlines = [PaymentInline]
     readonly_fields = ['created_at', 'updated_at', 'version']
     list_display = ['id', 'billing', 'issue_date', 'due_date', 'amount', 'status', 'created_at', 'updated_at']
     search_fields = ['id', 'billing__id', 'status']

@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from core.logger_service import get_logger
 
@@ -7,31 +9,44 @@ logger = get_logger()
 
 from .models import (
     OEM, Program, CustomUser, University, Contract, ContractProgram, Batch,
-    Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice, PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient
+    Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice,
+    PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient
 )
 
-# University Serializer
+# Base serializers for models without dependencies
 class UniversitySerializer(serializers.ModelSerializer):
     class Meta:
         model = University
         fields = '__all__'
 
-
-# OEM Serializer
 class OEMSerializer(serializers.ModelSerializer):
     class Meta:
         model = OEM
         fields = '__all__'
 
-
-# Stream Serializer
 class StreamSerializer(serializers.ModelSerializer):
     class Meta:
         model = Stream
         fields = '__all__'
 
+class TaxRateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TaxRate
+        fields = '__all__'
 
-# ContractFile Serializer
+# Serializers that depend on base models
+class ProgramSerializer(serializers.ModelSerializer):
+    provider = OEMSerializer(read_only=True)
+    provider_id = serializers.PrimaryKeyRelatedField(
+        queryset=OEM.objects.all(),
+        write_only=True,
+        source='provider'
+    )
+
+    class Meta:
+        model = Program
+        fields = ['id', 'name', 'program_code', 'provider', 'provider_id', 'duration', 'duration_unit', 'description', 'prerequisites']
+
 class ContractFileSerializer(serializers.ModelSerializer):
     class Meta:
         model = ContractFile
@@ -50,22 +65,6 @@ class ContractFileSerializer(serializers.ModelSerializer):
         
         return data
 
-
-# Program Serializer
-class ProgramSerializer(serializers.ModelSerializer):
-    provider = OEMSerializer(read_only=True)
-    provider_id = serializers.PrimaryKeyRelatedField(
-        queryset=OEM.objects.all(),
-        write_only=True,
-        source='provider'
-    )
-
-    class Meta:
-        model = Program
-        fields = ['id', 'name', 'program_code', 'provider', 'provider_id', 'duration', 'duration_unit', 'description', 'prerequisites']
-
-
-# ContractProgram Serializer
 class ContractProgramSerializer(serializers.ModelSerializer):
     program = ProgramSerializer()
 
@@ -73,40 +72,13 @@ class ContractProgramSerializer(serializers.ModelSerializer):
         model = ContractProgram
         fields = '__all__'
 
-
-# Contract Serializer
 class ContractSerializer(serializers.ModelSerializer):
-    # Read-only nested serializers for GET requests
     contract_programs = ContractProgramSerializer(many=True, read_only=True)
     contract_files = ContractFileSerializer(many=True, read_only=True)
     streams = StreamSerializer(many=True, read_only=True)
     oem = OEMSerializer(read_only=True)
     university = UniversitySerializer(read_only=True)
     programs = ProgramSerializer(many=True, read_only=True)
-    
-    # Write-only fields for PUT/PATCH requests
-    streams_ids = serializers.PrimaryKeyRelatedField(
-        queryset=Stream.objects.all(),
-        many=True,
-        write_only=True,
-        source='streams'
-    )
-    programs_ids = serializers.PrimaryKeyRelatedField(
-        queryset=Program.objects.all(),
-        many=True,
-        write_only=True,
-        source='programs'
-    )
-    oem_id = serializers.PrimaryKeyRelatedField(
-        queryset=OEM.objects.all(),
-        write_only=True,
-        source='oem'
-    )
-    university_id = serializers.PrimaryKeyRelatedField(
-        queryset=University.objects.all(),
-        write_only=True,
-        source='university'
-    )
 
     class Meta:
         model = Contract
@@ -114,12 +86,9 @@ class ContractSerializer(serializers.ModelSerializer):
             'id', 'name', 'cost_per_student', 'oem_transfer_price',
             'start_date', 'end_date', 'status', 'notes', 'tax_rate',
             'contract_programs', 'contract_files', 'streams', 'oem', 
-            'university', 'programs', 'streams_ids', 'programs_ids', 
-            'oem_id', 'university_id'
+            'university', 'programs'
         ]
 
-
-# Batch Serializer
 class BatchSerializer(serializers.ModelSerializer):
     effective_cost_per_student = serializers.DecimalField(
         max_digits=12, 
@@ -151,26 +120,22 @@ class BatchSerializer(serializers.ModelSerializer):
             'status', 'notes'
         ]
 
-
-# Billing Serializer
-class BillingSerializer(serializers.ModelSerializer):
-    total_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
-    total_payments = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
-    balance_due = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
-    total_oem_transfer_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
-    batch_snapshots = BatchSnapshotSerializer(many=True, read_only=True)
-
+class BatchSnapshotSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Billing
+        model = BatchSnapshot
         fields = [
-            'id', 'name', 'batches', 'batch_snapshots', 'notes',
-            'total_amount', 'total_payments', 'balance_due',
-            'total_oem_transfer_amount', 'created_at', 'updated_at'
+            'id', 'batch', 'number_of_students',
+            'cost_per_student', 'tax_rate', 'oem_transfer_price',
+            'status', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
 
+class PaymentDocumentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentDocument
+        fields = ['id', 'payment', 'file', 'description', 'uploaded_by', 'created_at', 'updated_at']
+        read_only_fields = ['uploaded_by', 'created_at', 'updated_at']
 
-# Payment Serializer
 class PaymentSerializer(serializers.ModelSerializer):
     documents = PaymentDocumentSerializer(many=True, read_only=True)
 
@@ -196,24 +161,6 @@ class PaymentSerializer(serializers.ModelSerializer):
             )
         return data
 
-
-class TaxRateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = TaxRate
-        fields = '__all__'
-
-
-class BatchSnapshotSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = BatchSnapshot
-        fields = [
-            'id', 'batch', 'number_of_students',
-            'cost_per_student', 'tax_rate', 'oem_transfer_price',
-            'status', 'created_at', 'updated_at'
-        ]
-        read_only_fields = ['created_at', 'updated_at']
-
-
 class InvoiceSerializer(serializers.ModelSerializer):
     payments = PaymentSerializer(many=True, read_only=True)
     amount_paid = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
@@ -232,12 +179,26 @@ class InvoiceSerializer(serializers.ModelSerializer):
     def get_remaining_amount(self, obj):
         return obj.amount - obj.amount_paid
 
+class BillingSerializer(serializers.ModelSerializer):
+    total_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    total_payments = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    balance_due = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    total_oem_transfer_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    batch_snapshots = BatchSnapshotSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Billing
+        fields = [
+            'id', 'name', 'batches', 'batch_snapshots', 'notes',
+            'total_amount', 'total_payments', 'balance_due',
+            'total_oem_transfer_amount', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
 
 class PaymentScheduleRecipientSerializer(serializers.ModelSerializer):
     class Meta:
         model = PaymentScheduleRecipient
         fields = ['id', 'payment_schedule', 'email']
-
 
 class PaymentScheduleSerializer(serializers.ModelSerializer):
     recipients = PaymentScheduleRecipientSerializer(many=True, read_only=True)
@@ -268,7 +229,6 @@ class PaymentScheduleSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError(f"Invalid email address: {email}")
         return value
 
-
 class PaymentReminderSerializer(serializers.ModelSerializer):
     class Meta:
         model = PaymentReminder
@@ -277,7 +237,6 @@ class PaymentReminderSerializer(serializers.ModelSerializer):
             'sent_at', 'error_message', 'created_at', 'updated_at'
         ]
         read_only_fields = ['status', 'sent_at', 'error_message', 'created_at', 'updated_at']
-
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
@@ -301,9 +260,8 @@ class UserSerializer(serializers.ModelSerializer):
             'is_superuser',
             'last_login',
             'date_joined',
-            # Add related fields
-            'oem_pocs',          # OEMs where user is POC
-            'university_pocs',   # Universities where user is POC
+            'oem_pocs',
+            'university_pocs'
         ]
         read_only_fields = [
             'id', 
@@ -318,7 +276,6 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip() or obj.username
-
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
@@ -338,7 +295,6 @@ class RegisterSerializer(serializers.ModelSerializer):
         validated_data.pop('password2')
         user = CustomUser.objects.create_user(**validated_data)
         return user
-
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
@@ -366,10 +322,3 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         }
         
         return data
-
-
-class PaymentDocumentSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PaymentDocument
-        fields = ['id', 'payment', 'file', 'description', 'uploaded_by', 'created_at', 'updated_at']
-        read_only_fields = ['uploaded_by', 'created_at', 'updated_at']
