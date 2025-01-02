@@ -12,18 +12,25 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.filters import OrderingFilter, SearchFilter
 from core.logger_service import get_logger
 from django.db.models import Q
+from decimal import Decimal
+from datetime import datetime, timedelta
+from calendar import monthrange
+from django.utils import timezone
+from django.db.models import Sum, Count, Q
+from django.db.models.functions import TruncMonth
 
 logger = get_logger()
 
 from .models import (
     OEM, Program, University, Stream, Contract, ContractProgram, Batch,
-    Billing, Payment, ContractFile, TaxRate, CustomUser
+    Billing, Payment, ContractFile, TaxRate, CustomUser, Invoice
 )
 from .serializers import (
-    OEMSerializer, ProgramSerializer, UniversitySerializer, StreamSerializer, 
-    ContractSerializer, ContractProgramSerializer, BatchSerializer, BillingSerializer, 
-    PaymentSerializer, ContractFileSerializer, TaxRateSerializer, RegisterSerializer, 
-    UserSerializer, CustomTokenObtainPairSerializer
+    OEMSerializer, ProgramSerializer, UniversitySerializer, StreamSerializer,
+    ContractSerializer, ContractProgramSerializer, BatchSerializer, BillingSerializer,
+    PaymentSerializer, ContractFileSerializer, TaxRateSerializer, RegisterSerializer,
+    UserSerializer, CustomTokenObtainPairSerializer, InvoiceSerializer, DashboardBillingSerializer,
+    DashboardInvoiceSerializer, DashboardPaymentSerializer
 )
 from .permissions import IsAuthenticatedAndReadOnly
 
@@ -485,3 +492,277 @@ class UserViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(is_superuser=True)
         
         return queryset.order_by('username')
+
+class InvoiceViewSet(viewsets.ModelViewSet):
+    queryset = Invoice.objects.all()
+    serializer_class = InvoiceSerializer
+    permission_classes = [IsAuthenticatedAndReadOnly]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    ordering_fields = ['issue_date', 'due_date', 'amount', 'status', 'created_at']
+    ordering = ['-created_at']
+    search_fields = ['notes']
+    filterset_fields = ['status', 'billing']
+    parser_classes = (MultiPartParser, FormParser)
+
+    def create(self, request, *args, **kwargs):
+        try:
+            data = request.data.dict() if hasattr(request.data, 'dict') else request.data
+            proforma_invoice = request.FILES.get('proforma_invoice')
+            actual_invoice = request.FILES.get('actual_invoice')
+            
+            if proforma_invoice:
+                data['proforma_invoice'] = proforma_invoice
+            if actual_invoice:
+                data['actual_invoice'] = actual_invoice
+
+            # Convert amount to Decimal if it's a string
+            if 'amount' in data and isinstance(data['amount'], str):
+                data['amount'] = Decimal(data['amount'])
+
+            serializer = self.get_serializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            headers = self.get_success_headers(serializer.data)
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        except Exception as e:
+            logger.error(f"Error creating invoice: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def update(self, request, *args, **kwargs):
+        try:
+            partial = kwargs.pop('partial', False)
+            instance = self.get_object()
+            data = request.data.dict() if hasattr(request.data, 'dict') else request.data
+
+            proforma_invoice = request.FILES.get('proforma_invoice')
+            actual_invoice = request.FILES.get('actual_invoice')
+            
+            if proforma_invoice:
+                data['proforma_invoice'] = proforma_invoice
+            if actual_invoice:
+                data['actual_invoice'] = actual_invoice
+
+            serializer = self.get_serializer(instance, data=data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+
+            return Response(serializer.data)
+        except Exception as e:
+            logger.error(f"Error updating invoice: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def upload_proforma(self, request, pk=None):
+        """Upload proforma invoice file"""
+        try:
+            invoice = self.get_object()
+            proforma_file = request.FILES.get('proforma_invoice')
+            
+            if not proforma_file:
+                return Response(
+                    {"error": "No file provided"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            invoice.proforma_invoice = proforma_file
+            invoice.save()
+            
+            serializer = self.get_serializer(invoice)
+            return Response(serializer.data)
+        except Exception as e:
+            logger.error(f"Error uploading proforma invoice: {str(e)}")
+            return Response(
+                {"error": "Failed to upload proforma invoice"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def upload_actual(self, request, pk=None):
+        """Upload actual invoice file"""
+        try:
+            invoice = self.get_object()
+            actual_file = request.FILES.get('actual_invoice')
+            
+            if not actual_file:
+                return Response(
+                    {"error": "No file provided"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            invoice.actual_invoice = actual_file
+            invoice.save()
+            
+            serializer = self.get_serializer(invoice)
+            return Response(serializer.data)
+        except Exception as e:
+            logger.error(f"Error uploading actual invoice: {str(e)}")
+            return Response(
+                {"error": "Failed to upload actual invoice"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class LogoutView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        try:
+            # Blacklist the refresh token if you're using it
+            # Add any cleanup needed
+            return Response({"message": "Successfully logged out"}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class DashboardViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticatedAndReadOnly]
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """Get dashboard summary including revenue, batches, invoices, and payments"""
+        today = timezone.now()
+        current_month_start = today.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        previous_month_start = (current_month_start - timedelta(days=1)).replace(day=1)
+
+        # Calculate total revenue
+        current_revenue = Payment.objects.filter(
+            status='completed',
+            payment_date__gte=current_month_start
+        ).aggregate(total=Sum('amount'))['total'] or 0
+
+        previous_revenue = Payment.objects.filter(
+            status='completed',
+            payment_date__gte=previous_month_start,
+            payment_date__lt=current_month_start
+        ).aggregate(total=Sum('amount'))['total'] or 0
+
+        percentage_change = (
+            ((current_revenue - previous_revenue) / previous_revenue * 100)
+            if previous_revenue > 0 else 0
+        )
+
+        # Get active batches info
+        active_batches = Batch.objects.filter(status='ongoing')
+        new_batches = active_batches.filter(created_at__gte=current_month_start)
+
+        # Get pending invoices
+        pending_invoices = Invoice.objects.exclude(status='paid')
+        
+        # Get overdue payments (invoices past due date with unpaid amount)
+        overdue_payments = Invoice.objects.filter(
+            due_date__lt=today,
+            status__in=['unpaid', 'partially_paid']
+        )
+
+        return Response({
+            'total_revenue': {
+                'current': current_revenue,
+                'previous': previous_revenue,
+                'percentage_change': round(percentage_change, 2)
+            },
+            'active_batches': {
+                'current': active_batches.count(),
+                'new_this_month': new_batches.count()
+            },
+            'pending_invoices': {
+                'count': pending_invoices.count(),
+                'total_value': pending_invoices.aggregate(
+                    total=Sum('amount') - Sum('amount_paid')
+                )['total'] or 0
+            },
+            'overdue_payments': {
+                'count': overdue_payments.count(),
+                'total_value': overdue_payments.aggregate(
+                    total=Sum('amount') - Sum('amount_paid')
+                )['total'] or 0
+            }
+        })
+
+    @action(detail=False, methods=['get'])
+    def revenue_overview(self, request):
+        """Get monthly revenue overview"""
+        year = int(request.query_params.get('year', datetime.now().year))
+        month = request.query_params.get('month')
+
+        payments = Payment.objects.filter(
+            status='completed',
+            payment_date__year=year
+        )
+
+        if month:
+            payments = payments.filter(payment_date__month=int(month))
+
+        revenue_data = (
+            payments
+            .annotate(month=TruncMonth('payment_date'))
+            .values('month')
+            .annotate(total=Sum('amount'))
+            .order_by('month')
+        )
+
+        return Response({
+            'data': [
+                {
+                    'name': item['month'].strftime('%B'),
+                    'total': item['total']
+                }
+                for item in revenue_data
+            ]
+        })
+
+    @action(detail=False, methods=['get'])
+    def recent_invoices(self, request):
+        """Get recent invoices with pagination"""
+        limit = int(request.query_params.get('limit', 5))
+        page = int(request.query_params.get('page', 1))
+
+        invoices = Invoice.objects.all().order_by('-created_at')
+        paginator = StandardResultsSetPagination()
+        paginator.page_size = limit
+        
+        paginated_invoices = paginator.paginate_queryset(invoices, request)
+        serializer = DashboardInvoiceSerializer(paginated_invoices, many=True)
+        
+        return paginator.get_paginated_response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def recent_payments(self, request):
+        """Get recent payments with pagination"""
+        limit = int(request.query_params.get('limit', 5))
+        page = int(request.query_params.get('page', 1))
+
+        payments = Payment.objects.all().order_by('-created_at')
+        paginator = StandardResultsSetPagination()
+        paginator.page_size = limit
+        
+        paginated_payments = paginator.paginate_queryset(payments, request)
+        serializer = DashboardPaymentSerializer(paginated_payments, many=True)
+        
+        return paginator.get_paginated_response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def overdue_billings(self, request):
+        """Get overdue billings with pagination"""
+        limit = int(request.query_params.get('limit', 5))
+        page = int(request.query_params.get('page', 1))
+
+        today = timezone.now().date()
+        
+        # Get billings with overdue invoices
+        overdue_billings = (
+            Billing.objects
+            .filter(
+                status__in=['active', 'paid'],
+                invoices__due_date__lt=today,
+                invoices__status__in=['unpaid', 'partially_paid']
+            )
+            .distinct()
+            .order_by('invoices__due_date')
+        )
+
+        paginator = StandardResultsSetPagination()
+        paginator.page_size = limit
+        
+        paginated_billings = paginator.paginate_queryset(overdue_billings, request)
+        serializer = DashboardBillingSerializer(paginated_billings, many=True)
+        
+        return paginator.get_paginated_response(serializer.data)

@@ -5,9 +5,14 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { sidebarConfig } from "@/config/sidebar"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, ChevronDown } from "lucide-react"
 import { cn } from "@/service/utils"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 
 const SIDEBAR_STATE_KEY = 'sidebar-collapsed'
 
@@ -56,32 +61,91 @@ export function Sidebar({className}: {className?: string}) {
         <div className="px-3 py-2">
           <div className="space-y-1">
             <TooltipProvider delayDuration={0}>
-              {sidebarConfig.map((item) => (
-                <Tooltip key={item.href} delayDuration={0}>
-                  <TooltipTrigger asChild>
-                    <Link href={item.href}>
-                      <Button
-                        variant={pathname === item.href ? "secondary" : "ghost"}
-                        className={cn(
-                          "w-full justify-start",
-                          isCollapsed && "justify-center px-2"
-                        )}
-                      >
-                        <item.icon className={cn(
-                          "h-4 w-4",
-                          !isCollapsed && "mr-2"
-                        )} />
-                        {!isCollapsed && item.title}
-                      </Button>
-                    </Link>
-                  </TooltipTrigger>
-                  {isCollapsed && (
-                    <TooltipContent side="right">
-                      {item.title}
-                    </TooltipContent>
-                  )}
-                </Tooltip>
-              ))}
+              {sidebarConfig.map((item, index) => {
+                if (item.items) {
+                  // Group item
+                  return (
+                    <Collapsible key={index}>
+                      <CollapsibleTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          className={cn(
+                            "w-full justify-start",
+                            isCollapsed && "justify-center px-2"
+                          )}
+                        >
+                          <item.icon className={cn(
+                            "h-4 w-4",
+                            !isCollapsed && "mr-2"
+                          )} />
+                          {!isCollapsed && (
+                            <>
+                              {item.title}
+                              <ChevronDown className="ml-auto h-4 w-4" />
+                            </>
+                          )}
+                        </Button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        {item.items.map((subItem) => (
+                          <Tooltip key={subItem.href} delayDuration={0}>
+                            <TooltipTrigger asChild>
+                              <Link href={subItem.href}>
+                                <Button
+                                  variant={pathname === subItem.href ? "secondary" : "ghost"}
+                                  className={cn(
+                                    "w-full justify-start pl-8",
+                                    isCollapsed && "justify-center px-2"
+                                  )}
+                                >
+                                  <subItem.icon className={cn(
+                                    "h-4 w-4",
+                                    !isCollapsed && "mr-2"
+                                  )} />
+                                  {!isCollapsed && subItem.title}
+                                </Button>
+                              </Link>
+                            </TooltipTrigger>
+                            {isCollapsed && (
+                              <TooltipContent side="right">
+                                {subItem.title}
+                              </TooltipContent>
+                            )}
+                          </Tooltip>
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )
+                }
+
+                // Single item
+                return (
+                  <Tooltip key={item.href} delayDuration={0}>
+                    <TooltipTrigger asChild>
+                      <Link href={item.href}>
+                        <Button
+                          variant={pathname === item.href ? "secondary" : "ghost"}
+                          className={cn(
+                            "w-full justify-start",
+                            isCollapsed && "justify-center px-2"
+                          )}
+                        >
+                          <item.icon className={cn(
+                            "h-4 w-4",
+                            !isCollapsed && "mr-2"
+                          )} />
+                          {!isCollapsed && item.title}
+                        </Button>
+                      </Link>
+                    </TooltipTrigger>
+                    {isCollapsed && (
+                      <TooltipContent side="right">
+                        {item.title}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                )
+              })}
             </TooltipProvider>
           </div>
         </div>

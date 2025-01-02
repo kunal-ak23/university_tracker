@@ -128,7 +128,6 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
           
           if (contract.oem?.id) {
             const programs = await getOEMPrograms(contract.oem.id.toString())
-            console.log('programs', programs);
             setAvailablePrograms(programs.results)
           }
           
@@ -407,7 +406,6 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
                   <FormLabel>OEM</FormLabel>
                   <Select 
                     onValueChange={(value) => {
-                      console.log('Selected OEM:', value)
                       field.onChange(value)
                       onOEMChange(value)
                     }}
@@ -468,7 +466,6 @@ export function ContractForm({ mode = 'create', contract }: ContractFormProps) {
                   <FormLabel>University</FormLabel>
                   <Select 
                     onValueChange={(value) => {
-                      console.log('Selected University:', value)
                       field.onChange(value)
                       onUniversityChange(value)
                     }}

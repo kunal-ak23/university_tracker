@@ -1,15 +1,17 @@
+import { BillingDetails } from "@/components/billings/billing-details";
 import { getBilling } from "@/service/api/billings"
 import { notFound } from "next/navigation"
-import { BillingDetails } from "@/components/billings/billing-details"
+
 
 export default async function BillingPage({
   params,
 }: {
-  params: { id: string }
+  params: Promise<{ id: string }>
 }) {
   let billing;
+  const {id} = await params
   try {
-    billing = await getBilling(params.id)
+    billing = await getBilling(id)
   } catch (error) {
     console.error('Error fetching billing:', error)
     notFound()

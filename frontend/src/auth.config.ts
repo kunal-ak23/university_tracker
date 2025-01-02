@@ -36,11 +36,6 @@ export const authConfig = {
               );
     
               const data = await response.json();
-              
-              console.log("Auth API Response:", {
-                status: response.status,
-                data: data,
-              });
     
               if (!response.ok) {
                 throw new Error(data.message || "Authentication failed");
@@ -60,8 +55,7 @@ export const authConfig = {
                 refreshToken: data.refresh,
                 ...data.user
               };
-    
-              console.log("Auth successful, returning user:", { ...user, accessToken: "[REDACTED]" });
+
               return user;
     
             } catch (error) {

@@ -21,10 +21,10 @@ function BillingsHeader({ status }: { status: string }) {
 export default async function BillingsPage({
   searchParams,
 }: {
-  searchParams: { status?: string }
+  searchParams: Promise<{ status?: string }>
 }) {
   // Get initial data for the active tab
-  const status = searchParams.status || 'active'
+  const {status = 'active'} = (await (searchParams)) || {}
   const { results: initialBillings } = await getBillings({ status })
 
   return (

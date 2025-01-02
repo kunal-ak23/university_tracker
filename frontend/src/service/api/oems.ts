@@ -26,8 +26,6 @@ export async function getOEM(id: string): Promise<OEM> {
 }
 
 export async function createOEM(data: OEMFormData): Promise<OEM> {
-    console.log(data);
-    console.log("creating OEM");
   return apiFetch('/oems/', {
     method: 'POST',
     headers: {
@@ -38,9 +36,6 @@ export async function createOEM(data: OEMFormData): Promise<OEM> {
 }
 
 export async function updateOEM(id: string, data: OEMFormData): Promise<OEM> {
-    console.log("updating OEM");
-    console.log(data.poc_id);
-    console.log(id);
     return apiFetch(`/oems/${id}/`, {
         method: 'PATCH',
         headers: {

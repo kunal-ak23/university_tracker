@@ -26,7 +26,6 @@ export async function getContract(id: string): Promise<Contract> {
 }
 
 export async function updateContract(id: string, formData: FormData): Promise<Contract> {
-  console.log('patching');
   return postFormData( `/contracts/${id}/`, formData, {
     method: 'PATCH'
   })

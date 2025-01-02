@@ -5,6 +5,7 @@ from django.db import transaction, models
 from django.db.models.signals import post_save, post_delete, pre_save, m2m_changed
 from django.dispatch import receiver
 from django.core.exceptions import ValidationError
+from decimal import Decimal
 
 from core.logger_service import get_logger
 from core.models import ContractFile, Billing, Payment, Invoice, Contract
@@ -23,19 +24,34 @@ def validate_contract_files(sender, instance, **kwargs):
 @receiver(m2m_changed, sender=Billing.batches.through)
 def handle_billing_batches_changed(sender, instance, action, reverse, model, pk_set, **kwargs):
     """Handle changes to billing.batches M2M relationship"""
-    if action == "pre_add" or action == "pre_remove" or action == "pre_clear":
-        # Check if batches can be modified
-        if not instance.can_modify_batches():
+    if action not in ("post_add", "post_remove", "post_clear"):
+        return
+
+    try:
+        billing = instance
+        if not billing.can_modify_batches():
             raise ValidationError("Cannot modify batches on an active or archived billing")
 
-    if action == "post_add" or action == "post_remove" or action == "post_clear":
-        # Clear previous batch_snapshots if in draft state
-        if instance.status == 'draft':
-            instance.batch_snapshots.all().delete()
+        if action == "post_add" and pk_set:
+            # Clear existing snapshots for these batches
+            billing.batch_snapshots.filter(batch_id__in=pk_set).delete()
             
-            # Create new snapshots for each batch
-            for batch in instance.batches.all():
-                instance.add_batch_snapshot(batch)
+            # Create new snapshots
+            for batch_id in pk_set:
+                batch = model.objects.get(id=batch_id)
+                billing.add_batch_snapshot(batch)
+        
+        elif action in ("post_remove", "post_clear"):
+            # Remove snapshots for removed batches
+            if pk_set:
+                billing.batch_snapshots.filter(batch_id__in=pk_set).delete()
+            else:  # post_clear
+                billing.batch_snapshots.all().delete()
+            
+            billing.update_totals()
+
+    except Exception as e:
+        raise ValidationError(f"Error updating billing: {str(e)}")
 
 @receiver(post_save, sender=Invoice)
 def handle_invoice_save(sender, instance, created, **kwargs):
@@ -75,23 +91,71 @@ def validate_courses_oem(sender, instance, **kwargs):
             instance.programs.set(filtered_programs)
 
 @receiver(post_save, sender=Payment)
-def handle_payment_status_change(sender, instance, created, **kwargs):
-    """Handle payment status changes and update related models"""
-    if instance.status == 'completed':
-        with transaction.atomic():
-            # Update invoice status
+def handle_payment_save(sender, instance, created, **kwargs):
+    """Update invoice and billing totals when a payment is saved"""
+    with transaction.atomic():
+        # Get the old instance if it exists
+        if not created:
+            try:
+                old_instance = Payment.objects.get(pk=instance.pk)
+                old_status = old_instance.status
+            except Payment.DoesNotExist:
+                old_status = None
+        else:
+            old_status = None
+
+        # Only update totals if status is 'completed' or changed from 'completed'
+        if instance.status == 'completed' or old_status == 'completed':
+            # Recalculate invoice amount_paid
             invoice = instance.invoice
             invoice.refresh_from_db()  # Ensure we have the latest data
-            invoice.amount_paid = models.F('amount_paid') + instance.amount
-            invoice.save()
-            invoice.refresh_from_db()
-            invoice.update_status()
-            invoice.save()
-
+            
+            total_payments = Decimal('0.00')
+            for payment in invoice.payments.filter(status='completed'):
+                total_payments += payment.amount
+            
+            # Update invoice
+            invoice.amount_paid = total_payments
+            invoice.save()  # This will trigger update_status()
+            
             # Update billing totals
             billing = invoice.billing
             billing.refresh_from_db()
             billing.update_totals()
+
+            # Check if billing should be marked as paid
+            # Only check if billing is active and balance_due is zero
+            if billing.status == 'active' and billing.balance_due == Decimal('0.00'):
+                billing.status = 'paid'
+                billing.save(skip_update=True)
+
+@receiver(post_delete, sender=Payment)
+def handle_payment_delete(sender, instance, **kwargs):
+    """Update invoice and billing totals when a payment is deleted"""
+    with transaction.atomic():
+        # Only update if the deleted payment was completed
+        if instance.status == 'completed':
+            # Recalculate invoice amount_paid
+            invoice = instance.invoice
+            invoice.refresh_from_db()
+            
+            total_payments = Decimal('0.00')
+            for payment in invoice.payments.filter(status='completed'):
+                total_payments += payment.amount
+            
+            # Update invoice
+            invoice.amount_paid = total_payments
+            invoice.save()  # This will trigger update_status()
+            
+            # Update billing totals
+            billing = invoice.billing
+            billing.refresh_from_db()
+            billing.update_totals()
+
+            # Check if billing status needs to be updated
+            if billing.status == 'paid' and billing.balance_due > Decimal('0.00'):
+                billing.status = 'active'
+                billing.save(skip_update=True)
 
 @receiver(post_save, sender=Invoice)
 def create_payment_schedule(sender, instance, created, **kwargs):

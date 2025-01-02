@@ -29,6 +29,14 @@ export interface Billing {
   status: 'draft' | 'active' | 'archived'
   created_at: string
   updated_at: string
+  days_overdue: number
+  due_date: string
+  dueDate: Date
+  invoice_number: string
+  invoice_date: string
+  invoice_amount: string
+  invoice_status: string
+  invoice_id: string
 }
 
 export interface BillingCreateInput {

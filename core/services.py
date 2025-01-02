@@ -4,7 +4,7 @@ from django.core.exceptions import ValidationError
 from datetime import date, timedelta
 from django.core.mail import send_mail
 from django.conf import settings
-from .models import PaymentSchedule, PaymentReminder
+from .models import PaymentSchedule, PaymentReminder, PaymentScheduleRecipient
 
 class ContractService:
     @staticmethod
@@ -25,9 +25,18 @@ class PaymentScheduleService:
             amount=amount,
             due_date=due_date,
             frequency=frequency,
-            reminder_days=reminder_days,
-            reminder_recipients=reminder_recipients
+            reminder_days=reminder_days
         )
+        
+        # Create recipients if provided
+        if reminder_recipients:
+            for email in reminder_recipients.split(','):
+                email = email.strip()
+                if email:  # Only create for non-empty emails
+                    PaymentScheduleRecipient.objects.create(
+                        payment_schedule=schedule,
+                        email=email
+                    )
         
         # Create reminder
         reminder_date = due_date - timedelta(days=reminder_days)

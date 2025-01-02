@@ -1,5 +1,6 @@
 "use client"
 
+import { useDebounce } from "@/hooks/use-debounce"
 import { getBillings } from "@/service/api/billings"
 import { Plus, Search } from "lucide-react"
 import Link from "next/link"
@@ -19,12 +20,14 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination"
-import { useDebounce } from "@/hooks/use-debounce"
+
 
 function getHeaderTitle(status: string) {
   switch (status) {
     case 'draft':
       return 'Draft Billings'
+    case 'paid':
+      return 'Paid Billings'
     case 'archived':
       return 'Archived Billings'
     case 'active':
@@ -84,11 +87,11 @@ export function BillingTabs({ defaultStatus, initialBillings }: BillingTabsProps
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const [activeStatus, setActiveStatus] = useState(defaultStatus)
+  const [activeStatus, setActiveStatus] = useState(defaultStatus || 'active')
   const [searchTerm, setSearchTerm] = useState("")
   const debouncedSearchTerm = useDebounce(searchTerm, 300)
   const [paginatedData, setPaginatedData] = useState<{ [key: string]: PaginatedResponse<Billing> }>({
-    [defaultStatus]: {
+    [defaultStatus || 'active']: {
       results: initialBillings,
       count: initialBillings.length,
       next: null,
@@ -97,7 +100,7 @@ export function BillingTabs({ defaultStatus, initialBillings }: BillingTabsProps
   })
   const [isLoading, setIsLoading] = useState<{ [key: string]: boolean }>({})
   const [currentPage, setCurrentPage] = useState<{ [key: string]: number }>({
-    [defaultStatus]: 1
+    [defaultStatus || 'active']: 1
   })
 
   const fetchBillings = async (status: string, page = 1, search = "") => {
@@ -218,10 +221,11 @@ export function BillingTabs({ defaultStatus, initialBillings }: BillingTabsProps
         />
       </div>
 
-      <Tabs defaultValue={defaultStatus} onValueChange={handleTabChange}>
-        <TabsList className="grid w-full grid-cols-3">
+      <Tabs defaultValue={defaultStatus || 'active'} onValueChange={handleTabChange}>
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="active">Active</TabsTrigger>
           <TabsTrigger value="draft">Draft</TabsTrigger>
+          <TabsTrigger value="paid">Paid</TabsTrigger>
           <TabsTrigger value="archived">Archived</TabsTrigger>
         </TabsList>
         <TabsContent value="active">
@@ -229,6 +233,9 @@ export function BillingTabs({ defaultStatus, initialBillings }: BillingTabsProps
         </TabsContent>
         <TabsContent value="draft">
           {renderTabContent('draft')}
+        </TabsContent>
+        <TabsContent value="paid">
+          {renderTabContent('paid')}
         </TabsContent>
         <TabsContent value="archived">
           {renderTabContent('archived')}

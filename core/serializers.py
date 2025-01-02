@@ -4,6 +4,8 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from core.logger_service import get_logger
+from django.db import models
+from datetime import date
 
 logger = get_logger()
 
@@ -146,7 +148,7 @@ class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
         fields = [
-            'id', 'invoice', 'amount', 'payment_date',
+            'id', 'name', 'invoice', 'amount', 'payment_date',
             'payment_method', 'status', 'transaction_reference',
             'notes', 'documents', 'created_at', 'updated_at'
         ]
@@ -173,7 +175,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invoice
         fields = [
-            'id', 'billing', 'issue_date', 'due_date', 'amount',
+            'id', 'name', 'billing', 'issue_date', 'due_date', 'amount',
             'amount_paid', 'remaining_amount', 'status', 'notes',
             'proforma_invoice', 'actual_invoice', 'payments',
             'created_at', 'updated_at'
@@ -326,3 +328,27 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         }
         
         return data
+
+class DashboardInvoiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Invoice
+        fields = ['id', 'name', 'amount', 'status', 'created_at']
+
+class DashboardPaymentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Payment
+        fields = ['id', 'name', 'amount', 'payment_method', 'status', 'payment_date']
+
+class DashboardBillingSerializer(serializers.ModelSerializer):
+    days_overdue = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Billing
+        fields = ['id', 'name', 'balance_due', 'days_overdue']
+
+    def get_days_overdue(self, obj):
+        # Get the earliest due date from associated invoices
+        earliest_due = obj.invoices.aggregate(earliest_due=models.Min('due_date'))['earliest_due']
+        if earliest_due and earliest_due < date.today():
+            return (date.today() - earliest_due).days
+        return 0

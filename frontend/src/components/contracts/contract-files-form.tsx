@@ -62,22 +62,17 @@ export function ContractFilesForm({ contract, action }: ContractFilesFormProps) 
   }
 
   const handleFileDelete = (fileId: number) => {
-    console.log("Initiating delete for file:", fileId)
     setFileToDelete(fileId)
   }
 
   const confirmDelete = async () => {
-    console.log("Confirming delete for file:", fileToDelete)
     if (!fileToDelete) {
-      console.log("No file selected for deletion")
       return
     }
 
     try {
-      console.log("Calling delete action...")
       await action.delete(fileToDelete)
       
-      console.log("Delete successful")
       toast({
         title: "Delete successful",
         description: "File deleted successfully",
@@ -87,7 +82,6 @@ export function ContractFilesForm({ contract, action }: ContractFilesFormProps) 
       setFileToDelete(null)
       router.refresh()
     } catch (error) {
-      console.error('Failed to delete file:', error)
       toast({
         title: "Error",
         description: error instanceof Error ? error.message : "Failed to delete file",
@@ -123,13 +117,11 @@ export function ContractFilesForm({ contract, action }: ContractFilesFormProps) 
       <ConfirmationDialog
         open={fileToDelete !== null}
         onOpenChange={(open) => {
-          console.log("Dialog state changing:", { open, fileToDelete })
           if (!open) {
             setFileToDelete(null)
           }
         }}
         onConfirm={() => {
-          console.log("Confirm button clicked")
           confirmDelete()
         }}
         title="Delete File"

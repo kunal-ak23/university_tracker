@@ -87,7 +87,6 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
   useEffect(() => {
     if (mode === 'edit' && batch?.contract) {
       const contract = contracts.find(c => c.id.toString() === batch.contract.toString())
-      console.log('contract', contract)
       if (contract) {
         setSelectedContractDetails(contract)
         setStreams(contract.streams)
@@ -95,7 +94,6 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
     }
   }, [mode, batch, contracts])
 
-  console.log('taxRates', batch)
   const form = useForm<BatchFormValues>({
     resolver: zodResolver(batchFormSchema),
     defaultValues: {
@@ -112,7 +110,7 @@ export function BatchForm({ mode = 'create', batch }: BatchFormProps) {
         ? batch.tax_rate_override.toString() 
         : "none",
       oem_transfer_price_override: batch?.oem_transfer_price_override?.toString() ?? "",
-      status: batch?.status ?? "planned",
+      status: batch?.status as "ongoing" | "planned" | "completed" | undefined ?? "planned",
       notes: batch?.notes ?? "",
     },
   })

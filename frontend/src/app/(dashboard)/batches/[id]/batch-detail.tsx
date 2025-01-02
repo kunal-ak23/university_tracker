@@ -31,11 +31,11 @@ const BatchDetail = ({ initialBatch, initialContract }: BatchDetailProps) => {
   }
 
   const canCreateOem = batch.number_of_students > 0 && 
-    batch.start_date && 
-    batch.end_date && 
-    (batch.cost_per_student_override || contract?.cost_per_student) && 
-    (batch.oem_transfer_price_override || contract?.oem_transfer_price) &&
-    batch.effective_tax_rate
+    batch?.start_date && 
+    batch?.end_date && 
+    (batch?.cost_per_student_override || contract?.cost_per_student) && 
+    (batch?.oem_transfer_price_override || contract?.oem_transfer_price) &&
+    batch?.effective_tax_rate
 
   return (
     <div className="space-y-6">
@@ -47,9 +47,6 @@ const BatchDetail = ({ initialBatch, initialContract }: BatchDetailProps) => {
         <div className="flex gap-4">
           <Link href={`/batches/${batch.id}/edit`}>
             <Button>Edit Batch</Button>
-          </Link>
-          <Link href={`/batches/${batch.id}/oem/new`}>
-            <Button disabled={!canCreateOem}>New OEM</Button>
           </Link>
         </div>
       </div>

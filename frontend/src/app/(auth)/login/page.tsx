@@ -4,7 +4,6 @@ import { LoginForm } from "@/components/forms/auth/login-form"
 
 const LoginPage = async () => {
   const session = await auth();
-  console.log(session);
 
   if (session) {
     redirect("/contracts")

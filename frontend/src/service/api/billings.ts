@@ -2,28 +2,23 @@ import {Billing, BillingCreateInput} from "@/types/billing"
 import {PaginatedResponse} from "@/types/common"
 import {apiFetch} from "./fetch"
 
-export async function getBillings(params?: {
+interface GetBillingsParams {
   page?: number
+  page_size?: number
   search?: string
-  ordering?: string
   status?: string
-}): Promise<PaginatedResponse<Billing>> {
+  ordering?: string
+}
+
+export async function getBillings(params: GetBillingsParams = {}): Promise<PaginatedResponse<Billing>> {
   const searchParams = new URLSearchParams()
-  console.log("params", params);
-  console.log("params.page", params?.page);
+  if (params.page) searchParams.append('page', params.page.toString())
+  if (params.page_size) searchParams.append('page_size', params.page_size.toString())
+  if (params.search) searchParams.append('search', params.search)
+  if (params.status) searchParams.append('status', params.status)
+  if (params.ordering) searchParams.append('ordering', params.ordering)
 
-
-  if(params?.status) searchParams.set("status", params.status);
-  if (params?.page) searchParams.set("page", params.page.toString())
-  if (params?.search) searchParams.set("search", params.search)
-  if (params?.ordering) searchParams.set("ordering", params.ordering)
-
-  const queryString = searchParams.toString()
-  console.log("queryString", queryString);
-  const url = `/billings/${queryString ? `?${queryString}` : ""}`
-  
-  console.log("url", url);
-  return apiFetch(url)
+  return apiFetch(`/billings/?${searchParams.toString()}`)
 }
 
 export async function getBilling(id: string): Promise<Billing> {
@@ -51,7 +46,6 @@ export async function updateBilling(id: string, data: Partial<BillingCreateInput
 }
 
 export async function publishBilling(id: string): Promise<void> {
-  console.log("publishBilling", id);
   return apiFetch(`/billings/${id}/publish/`, {
     method: "POST",
   })

@@ -3,18 +3,15 @@
 "use server";
 
 import { auth } from "@/auth"
-import { cookies } from "next/headers"
-import { signOut } from "@/auth"
 
 
 export async function apiFetch(
   endpoint: string,
   options: RequestInit = {}
 ) {
-  const session = await auth()
-  
-  // @ts-ignore 
-  if (!session?.accessToken && !session?.refreshToken) {
+  const session = await auth();
+  // @ts-ignore
+  if (!session?.accessToken || !session?.refreshToken) {
     throw new Error('No access token found')
   }
 
@@ -58,9 +55,6 @@ export async function apiFetch(
       })
 
       if (!refreshResponse.ok) {
-        // Clear cookies and throw error
-        signOut();
-        redirect('/login');
         throw new Error('Refresh token expired. Please login again.')
       }
 
@@ -76,7 +70,6 @@ export async function apiFetch(
         },
       })
     } catch (error) {
-      signOut();
       throw error
     }
   }
@@ -127,11 +120,8 @@ export async function postFormData(
     throw new Error('No access token found')
   }
 
-  const baseURL = process.env.NEXT_PUBLIC_API_URL
-  const url = `${baseURL}${endpoint}`
-  console.log(url);
-  console.log(formData);
-  console.log(options);
+  const baseURL = process.env.NEXT_PUBLIC_API_URL;
+  const url = `${baseURL}${endpoint}`;
 
   let response = await fetch(url, {
     ...options,
@@ -160,8 +150,6 @@ export async function postFormData(
       })
 
       if (!refreshResponse.ok) {
-        signOut();
-        redirect('/login');
         throw new Error('Refresh token expired. Please login again.')
       }
 
@@ -169,25 +157,34 @@ export async function postFormData(
       
       // Retry original request with new token
       response = await fetch(url, {
-        method: 'POST',
-        body: formData,
         ...options,
+        body: formData,
         headers: {
           'Authorization': `Bearer ${newAccessToken}`,
           ...options.headers,
         },
       })
     } catch (error) {
-      (await cookies()).delete('next-auth.session-token')
       throw error
     }
   }
 
   if (!response.ok) {
-    console.log(response.statusText);
-    console.log(response.status);
-    console.log(response.body);
-    throw new Error(response.statusText || 'API request failed');
+    
+    try {
+      const contentType = response.headers.get('content-type')
+      if (contentType && contentType.includes('application/json')) {
+        const errorData = await response.json()
+        throw new Error(JSON.stringify(errorData))
+      }
+      const errorText = await response.text()
+      throw new Error(errorText || `API request failed with status ${response.status}`)
+    } catch (error) {
+      if (error instanceof Error) {
+        throw error
+      }
+      throw new Error('API request failed')
+    }
   }
 
   return response.json()

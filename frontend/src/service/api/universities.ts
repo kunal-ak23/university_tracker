@@ -25,7 +25,6 @@ export async function getUniversities(params?: GetUniversitiesParams): Promise<P
   
   const queryString = searchParams.toString()
   const url = `/universities/${queryString ? `?${queryString}` : ''}`
-  console.log('Fetching universities with URL:', url)
   return apiFetch(url)
 }
 

@@ -1,16 +1,5 @@
 import {z} from "zod";
-
-export interface Program {
-  id: number
-  name: string
-  program_code: string
-  duration: number
-  duration_unit: string
-  description: string
-  prerequisites: string
-  provider?: any
-}
-
+import { Program } from "./program";
 export interface ContractProgram {
   id: number
   program: Program

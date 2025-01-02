@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Contract, ContractFormData, contractFormSchema, OEM, Program, Stream, University } from "@/types/contract"
+import { Contract, ContractFormData, contractFormSchema, OEM, Stream, University } from "@/types/contract"
+import { Program } from "@/types/program"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { Input } from "@/components/ui/input"
@@ -77,8 +78,9 @@ export function ContractForm({
     form.setValue('programs_ids', []) // Clear selected programs
     
     try {
-      const programs = await getProgramsByOem(oemId)
-      setAvailablePrograms(programs.results)
+      const programs = (await getProgramsByOem(oemId)).results
+      
+      setAvailablePrograms(programs as Program[])
     } catch (error) {
       console.error('Failed to load programs:', error)
     }
@@ -106,9 +108,9 @@ export function ContractForm({
       const loadInitialData = async () => {
         if (contract.oem?.id) {
           try {
-            const programs = await getProgramsByOem(contract.oem.id)
+            const programs = (await getProgramsByOem(contract.oem.id)).results
             if (mounted) {
-              setAvailablePrograms(programs.results)
+              setAvailablePrograms(programs as Program[])
             }
           } catch (error) {
             console.error(error)

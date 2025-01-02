@@ -50,7 +50,7 @@ export function UniversitiesTable({
     }
   }
 
-  const columns: ColumnDef<University, any>[] = [
+  const columns: ColumnDef<University, unknown>[] = [
     {
       id: "name",
       header: "Name",
@@ -90,7 +90,7 @@ export function UniversitiesTable({
   ]
 
   return (
-    <DataTable<University, any>
+    <DataTable<University, unknown>
       data={universities}
       columns={columns}
       pageCount={totalPages}

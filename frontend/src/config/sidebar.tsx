@@ -7,6 +7,11 @@ import {
   Users,
   BookOpen,
   Receipt,
+  CreditCard,
+  FileText,
+  Building,
+  School,
+  Wallet,
 } from "lucide-react"
 
 export const sidebarConfig = [
@@ -16,34 +21,62 @@ export const sidebarConfig = [
     icon: LayoutDashboard,
   },
   {
-    title: "Contracts",
-    href: "/contracts",
-    icon: FileArchiveIcon,
+    title: "OEM Management",
+    icon: Building,
+    items: [
+      {
+        title: "OEMs",
+        href: "/oems",
+        icon: Building2,
+      },
+      {
+        title: "Programs",
+        href: "/programs",
+        icon: BookOpen,
+      },
+    ],
   },
   {
-    title: "OEMs",
-    href: "/oems",
-    icon: Building2,
+    title: "University Management",
+    icon: School,
+    items: [
+      {
+        title: "Universities",
+        href: "/universities",
+        icon: GraduationCap,
+      },
+      {
+        title: "Batches",
+        href: "/batches",
+        icon: Users,
+      },
+      {
+        title: "Contracts",
+        href: "/contracts",
+        icon: FileArchiveIcon,
+      },
+    ],
   },
   {
-    title: "Programs",
-    href: "/programs",
-    icon: BookOpen,
-  },
-  {
-    title: "Universities",
-    href: "/universities",
-    icon: GraduationCap,
-  },
-  {
-    title: "Batches",
-    href: "/batches",
-    icon: Users,
-  },
-  {
-    title: "Billings",
-    href: "/billings",
-    icon: Receipt,
+    title: "Finance",
+    icon: Wallet,
+    items: [
+      {
+        title: "Billings",
+        href: "/billings",
+        icon: Receipt,
+      },
+      {
+        title: "Invoices",
+        href: "/invoices",
+        icon: FileText,
+      },
+      {
+        title: "Payments",
+        href: "/payments",
+        icon: CreditCard,
+      },
+    ],
   },
   {
     title: "Settings",

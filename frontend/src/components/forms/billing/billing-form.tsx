@@ -102,7 +102,6 @@ export function BillingForm({ mode = 'create', billing, availableBatches }: Bill
     try {
       setIsSubmitting(true)
       if (mode === 'edit' && billing) {
-        console.log(data, billing.id);
         await updateBilling(billing.id, data)
         toast({
           title: "Success",
@@ -111,14 +110,14 @@ export function BillingForm({ mode = 'create', billing, availableBatches }: Bill
         router.push('/billings')
       } else {
         // Create draft billing
-        console.log(data);
         const response = await createBilling(data)
         setDraftId(response.id)
         toast({
           title: "Success",
           description: "Draft billing created successfully. You can now review and publish it.",
         })
-        // Don't redirect yet, allow user to publish
+        // Redirect to edit page
+        router.push(`/billings/${response.id}/edit`)
       }
       router.refresh()
     } catch (error) {

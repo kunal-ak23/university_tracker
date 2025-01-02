@@ -266,6 +266,7 @@ class Billing(BaseModel):
     STATUS_CHOICES = [
         ('draft', 'Draft'),
         ('active', 'Active'),
+        ('paid', 'Paid'),
         ('archived', 'Archived'),
     ]
 
@@ -376,6 +377,7 @@ class Billing(BaseModel):
 
 
 class Invoice(BaseModel):
+    name = models.CharField(max_length=255, default="Invoice")
     billing = models.ForeignKey(Billing, on_delete=models.CASCADE, related_name='invoices')
     issue_date = models.DateField()
     due_date = models.DateField()
@@ -404,11 +406,12 @@ class Invoice(BaseModel):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f'Invoice {self.id} for {self.billing}'
+        return self.name
 
 
 
 class Payment(BaseModel):
+    name = models.CharField(max_length=255, default="Payment")
     invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='payments')
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     payment_date = models.DateField()
@@ -428,17 +431,8 @@ class Payment(BaseModel):
             if self.amount > remaining_amount:
                 raise ValidationError(f"Payment amount ({self.amount}) exceeds remaining invoice amount ({remaining_amount})")
 
-    def save(self, *args, **kwargs):
-        with transaction.atomic():
-            super().save(*args, **kwargs)
-            
-            if self.status == 'completed':
-                # Update invoice amount_paid
-                self.invoice.amount_paid = models.F('amount_paid') + self.amount
-                self.invoice.save()
-
     def __str__(self):
-        return f'Payment {self.id} for Invoice {self.invoice.id}'
+        return self.name
 
 class PaymentDocument(BaseModel):
     payment = models.ForeignKey(Payment, on_delete=models.CASCADE, related_name='documents')
