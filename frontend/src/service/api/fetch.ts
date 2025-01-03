@@ -2,7 +2,7 @@
 
 "use server";
 
-import { auth } from "@/auth"
+import { auth, signOut } from "@/auth"
 
 
 export async function apiFetch(
@@ -55,6 +55,7 @@ export async function apiFetch(
       })
 
       if (!refreshResponse.ok) {
+        await signOut();
         throw new Error('Refresh token expired. Please login again.')
       }
 
@@ -70,6 +71,7 @@ export async function apiFetch(
         },
       })
     } catch (error) {
+      await signOut();
       throw error
     }
   }

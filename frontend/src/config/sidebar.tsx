@@ -3,7 +3,6 @@ import {
   FileArchiveIcon,
   Building2,
   GraduationCap,
-  Settings,
   Users,
   BookOpen,
   Receipt,
@@ -77,10 +76,5 @@ export const sidebarConfig = [
         icon: CreditCard,
       },
     ],
-  },
-  {
-    title: "Settings",
-    href: "/settings",
-    icon: Settings,
   },
 ] 

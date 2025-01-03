@@ -4,6 +4,9 @@ import { DEFAULT_REDIRECT_URL } from "./routes";
 
 export default auth((req) => {
   const isAuthenticated = !!req.auth;
+  console.log(req.auth);
+  console.log(req.nextUrl.pathname);
+  console.log(isAuthenticated);
 
   // Public paths that don't require authentication
   const publicPaths = ['/login', '/register', '/forgot-password', '/reset-password'];
