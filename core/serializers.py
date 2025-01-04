@@ -81,6 +81,14 @@ class ContractSerializer(serializers.ModelSerializer):
     oem = OEMSerializer(read_only=True)
     university = UniversitySerializer(read_only=True)
     programs = ProgramSerializer(many=True, read_only=True)
+    tax_rate = TaxRateSerializer(read_only=True)
+    oem_id = serializers.PrimaryKeyRelatedField(queryset=OEM.objects.all(), source='oem', write_only=True)
+    university_id = serializers.PrimaryKeyRelatedField(queryset=University.objects.all(), source='university', write_only=True)
+    tax_rate_id = serializers.PrimaryKeyRelatedField(queryset=TaxRate.objects.all(), source='tax_rate', write_only=True)
+    programs_ids = serializers.PrimaryKeyRelatedField(many=True, queryset=Program.objects.all(), write_only=True, source='programs')
+    streams_ids = serializers.PrimaryKeyRelatedField(many=True, queryset=Stream.objects.all(), write_only=True, source='streams')
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Contract
@@ -88,7 +96,8 @@ class ContractSerializer(serializers.ModelSerializer):
             'id', 'name', 'cost_per_student', 'oem_transfer_price',
             'start_date', 'end_date', 'status', 'notes', 'tax_rate',
             'contract_programs', 'contract_files', 'streams', 'oem', 
-            'university', 'programs'
+            'university', 'programs', 'oem_id', 'university_id', 'tax_rate_id',
+            'programs_ids', 'streams_ids', 'created_at', 'updated_at'
         ]
 
 class BatchSerializer(serializers.ModelSerializer):

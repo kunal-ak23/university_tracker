@@ -13,14 +13,6 @@ from core.services import PaymentScheduleService
 
 logger = get_logger()
 
-@receiver(post_save, sender=ContractFile)
-@receiver(post_delete, sender=ContractFile)
-def validate_contract_files(sender, instance, **kwargs):
-    contract = instance.contract
-    if not contract.contract_files.exists():
-        raise ValidationError("Contract must have at least one contract file.")
-
-
 @receiver(m2m_changed, sender=Billing.batches.through)
 def handle_billing_batches_changed(sender, instance, action, reverse, model, pk_set, **kwargs):
     """Handle changes to billing.batches M2M relationship"""

@@ -131,7 +131,7 @@ class ContractViewSet(viewsets.ModelViewSet):
                 'oem_transfer_price': request.data.get('oem_transfer_price'),
                 'start_date': request.data.get('start_date'),
                 'end_date': request.data.get('end_date'),
-                'tax_rate': request.data.get('tax_rate'),
+                'tax_rate_id': request.data.get('tax_rate'),
                 'status': request.data.get('status', 'active'),
                 'notes': request.data.get('notes'),
             }
@@ -154,11 +154,19 @@ class ContractViewSet(viewsets.ModelViewSet):
             logger.info(f"Processed contract data: {contract_data}")
 
             # Validate required fields
-            required_fields = ['name', 'university_id', 'oem_id', 'cost_per_student', 'tax_rate']
+            required_fields = ['name', 'university_id', 'oem_id', 'cost_per_student', 'tax_rate_id']
             missing_fields = [field for field in required_fields if field not in contract_data]
             if missing_fields:
                 return Response(
                     {"errors": f"Missing required fields: {', '.join(missing_fields)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check if files are present
+            files = request.FILES.getlist('files')
+            if not files:
+                return Response(
+                    {"errors": "At least one contract file is required"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -173,18 +181,16 @@ class ContractViewSet(viewsets.ModelViewSet):
 
             self.perform_create(serializer)
 
-            # Handle files if present
-            files = request.FILES.getlist('files')
-            if files:
-                logger.info(f"Processing {len(files)} files")
-                for file in files:
-                    ContractFile.objects.create(
-                        contract=serializer.instance,
-                        file=file,
-                        file_type='document',
-                        description=file.name,
-                        uploaded_by=request.user
-                    )
+            # Handle files
+            logger.info(f"Processing {len(files)} files")
+            for file in files:
+                ContractFile.objects.create(
+                    contract=serializer.instance,
+                    file=file,
+                    file_type='document',
+                    description=file.name,
+                    uploaded_by=request.user
+                )
 
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -210,7 +216,7 @@ class ContractViewSet(viewsets.ModelViewSet):
                 'oem_transfer_price': request.data.get('oem_transfer_price'),
                 'start_date': request.data.get('start_date'),
                 'end_date': request.data.get('end_date'),
-                'tax_rate': request.data.get('tax_rate'),
+                'tax_rate_id': request.data.get('tax_rate'),
                 'status': request.data.get('status'),
                 'notes': request.data.get('notes'),
             }
@@ -218,9 +224,6 @@ class ContractViewSet(viewsets.ModelViewSet):
             # Handle array fields
             programs = request.data.getlist('programs_ids[]') or request.data.getlist('programs[]')
             streams = request.data.getlist('streams_ids[]') or request.data.getlist('streams[]')
-
-            logger.info(f"Programs: {programs}")
-            logger.info(f"Streams: {streams}")
             
             if programs:
                 contract_data['programs_ids'] = programs
@@ -233,15 +236,15 @@ class ContractViewSet(viewsets.ModelViewSet):
             logger.info(f"Processed contract data: {contract_data}")
 
             # Update contract
-            contract_serializer = self.get_serializer(instance, data=contract_data, partial=True)
-            if not contract_serializer.is_valid():
-                logger.error(f"Validation errors: {contract_serializer.errors}")
+            serializer = self.get_serializer(instance, data=contract_data, partial=True)
+            if not serializer.is_valid():
+                logger.error(f"Validation errors: {serializer.errors}")
                 return Response(
-                    {"errors": contract_serializer.errors},
+                    {"errors": serializer.errors},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            self.perform_update(contract_serializer)
+            self.perform_update(serializer)
 
             # Handle files if present
             files = request.FILES.getlist('files')
@@ -256,7 +259,7 @@ class ContractViewSet(viewsets.ModelViewSet):
                         uploaded_by=request.user
                     )
 
-            return Response(contract_serializer.data)
+            return Response(serializer.data)
 
         except Exception as e:
             logger.error(f"Contract update error: {str(e)}")

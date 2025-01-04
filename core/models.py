@@ -152,6 +152,11 @@ class Contract(BaseModel):
     def __str__(self):
         return f'Contract {self.name} ({self.university.name} - {self.oem.name})'
 
+    def clean(self):
+        super().clean()
+        if self.pk and not self.contract_files.exists():
+            raise ValidationError("Contract must have at least one file.")
+
 
 class ContractFile(BaseModel):
     contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name='contract_files')
