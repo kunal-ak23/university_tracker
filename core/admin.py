@@ -10,7 +10,8 @@ from django.utils.safestring import mark_safe
 
 from .logger_service import get_logger
 from .models import Billing, Payment, OEM, Program, University, Stream, TaxRate, Contract, ContractProgram, Batch, \
-    Invoice, ContractFile, CustomUser, BatchSnapshot, PaymentDocument, PaymentScheduleRecipient, PaymentSchedule
+    Invoice, ContractFile, CustomUser, BatchSnapshot, PaymentDocument, PaymentScheduleRecipient, PaymentSchedule, \
+    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student
 
 
 logger = get_logger()
@@ -275,3 +276,33 @@ class PaymentScheduleAdmin(admin.ModelAdmin):
     search_fields = ['invoice__reference_number']
     readonly_fields = ['status', 'created_at', 'updated_at']
     inlines = [PaymentScheduleRecipientInline]
+
+class ChannelPartnerProgramInline(admin.TabularInline):
+    model = ChannelPartnerProgram
+    extra = 0
+
+@admin.register(ChannelPartner)
+class ChannelPartnerAdmin(admin.ModelAdmin):
+    list_display = ['name', 'contact_email', 'contact_phone', 'commission_rate', 'status']
+    search_fields = ['name', 'contact_email', 'contact_phone']
+    list_filter = ['status', 'created_at', 'updated_at']
+    inlines = [ChannelPartnerProgramInline]
+
+@admin.register(ChannelPartnerProgram)
+class ChannelPartnerProgramAdmin(admin.ModelAdmin):
+    list_display = ['channel_partner', 'program', 'transfer_price', 'commission_rate', 'is_active']
+    search_fields = ['channel_partner__name', 'program__name']
+    list_filter = ['is_active', 'created_at', 'updated_at']
+
+@admin.register(ChannelPartnerStudent)
+class ChannelPartnerStudentAdmin(admin.ModelAdmin):
+    list_display = ['student_name', 'channel_partner', 'batch', 'transfer_price', 'commission_amount', 'status']
+    search_fields = ['student_name', 'student_email', 'student_phone']
+    list_filter = ['status', 'created_at', 'updated_at']
+
+@admin.register(Student)
+class StudentAdmin(admin.ModelAdmin):
+    list_display = ['name', 'email', 'phone', 'enrollment_source', 'status']
+    search_fields = ['name', 'email', 'phone', 'address', 'notes']
+    list_filter = ['enrollment_source', 'status', 'created_at', 'updated_at']
+    ordering = ['name']

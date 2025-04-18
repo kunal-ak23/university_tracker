@@ -12,7 +12,8 @@ logger = get_logger()
 from .models import (
     OEM, Program, CustomUser, University, Contract, ContractProgram, Batch,
     Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice,
-    PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient
+    PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient,
+    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student
 )
 
 # Base serializers for models without dependencies
@@ -361,3 +362,91 @@ class DashboardBillingSerializer(serializers.ModelSerializer):
         if earliest_due and earliest_due < date.today():
             return (date.today() - earliest_due).days
         return 0
+
+class ChannelPartnerSerializer(serializers.ModelSerializer):
+    poc = UserSerializer(read_only=True)
+    poc_id = serializers.PrimaryKeyRelatedField(
+        queryset=CustomUser.objects.all(),
+        source='poc',
+        write_only=True,
+        required=False
+    )
+
+    class Meta:
+        model = ChannelPartner
+        fields = [
+            'id', 'name', 'website', 'contact_email', 'contact_phone',
+            'address', 'poc', 'poc_id', 'commission_rate', 'status',
+            'notes', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+class ChannelPartnerProgramSerializer(serializers.ModelSerializer):
+    channel_partner = ChannelPartnerSerializer(read_only=True)
+    channel_partner_id = serializers.PrimaryKeyRelatedField(
+        queryset=ChannelPartner.objects.all(),
+        source='channel_partner',
+        write_only=True
+    )
+    program = ProgramSerializer(read_only=True)
+    program_id = serializers.PrimaryKeyRelatedField(
+        queryset=Program.objects.all(),
+        source='program',
+        write_only=True
+    )
+    effective_commission_rate = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        read_only=True,
+        source='get_effective_commission_rate'
+    )
+
+    class Meta:
+        model = ChannelPartnerProgram
+        fields = [
+            'id', 'channel_partner', 'channel_partner_id', 'program',
+            'program_id', 'transfer_price', 'commission_rate',
+            'effective_commission_rate', 'is_active', 'start_date',
+            'end_date', 'notes', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+class StudentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Student
+        fields = [
+            'id', 'name', 'email', 'phone', 'date_of_birth',
+            'address', 'enrollment_source', 'status', 'notes',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+class ChannelPartnerStudentSerializer(serializers.ModelSerializer):
+    channel_partner = ChannelPartnerSerializer(read_only=True)
+    channel_partner_id = serializers.PrimaryKeyRelatedField(
+        queryset=ChannelPartner.objects.all(),
+        source='channel_partner',
+        write_only=True
+    )
+    batch = BatchSerializer(read_only=True)
+    batch_id = serializers.PrimaryKeyRelatedField(
+        queryset=Batch.objects.all(),
+        source='batch',
+        write_only=True
+    )
+    student = StudentSerializer(read_only=True)
+    student_id = serializers.PrimaryKeyRelatedField(
+        queryset=Student.objects.all(),
+        source='student',
+        write_only=True
+    )
+
+    class Meta:
+        model = ChannelPartnerStudent
+        fields = [
+            'id', 'channel_partner', 'channel_partner_id', 'batch',
+            'batch_id', 'student', 'student_id', 'enrollment_date',
+            'transfer_price', 'commission_amount', 'status', 'notes',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']

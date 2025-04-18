@@ -23,14 +23,16 @@ logger = get_logger()
 
 from .models import (
     OEM, Program, University, Stream, Contract, ContractProgram, Batch,
-    Billing, Payment, ContractFile, TaxRate, CustomUser, Invoice
+    Billing, Payment, ContractFile, TaxRate, CustomUser, Invoice, ChannelPartner,
+    ChannelPartnerProgram, ChannelPartnerStudent, Student
 )
 from .serializers import (
     OEMSerializer, ProgramSerializer, UniversitySerializer, StreamSerializer,
     ContractSerializer, ContractProgramSerializer, BatchSerializer, BillingSerializer,
     PaymentSerializer, ContractFileSerializer, TaxRateSerializer, RegisterSerializer,
     UserSerializer, CustomTokenObtainPairSerializer, InvoiceSerializer, DashboardBillingSerializer,
-    DashboardInvoiceSerializer, DashboardPaymentSerializer
+    DashboardInvoiceSerializer, DashboardPaymentSerializer, ChannelPartnerSerializer,
+    ChannelPartnerProgramSerializer, ChannelPartnerStudentSerializer, StudentSerializer
 )
 from .permissions import IsAuthenticatedAndReadOnly
 
@@ -769,3 +771,81 @@ class DashboardViewSet(viewsets.ViewSet):
         serializer = DashboardBillingSerializer(paginated_billings, many=True)
         
         return paginator.get_paginated_response(serializer.data)
+
+class ChannelPartnerFilter(filters.FilterSet):
+    status = filters.CharFilter(field_name='status')
+    poc = filters.NumberFilter(field_name='poc__id')
+    
+    class Meta:
+        model = ChannelPartner
+        fields = ['status', 'poc']
+
+class ChannelPartnerViewSet(viewsets.ModelViewSet):
+    queryset = ChannelPartner.objects.all()
+    serializer_class = ChannelPartnerSerializer
+    permission_classes = [IsAuthenticatedAndReadOnly]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_class = ChannelPartnerFilter
+    ordering_fields = ['name', 'status', 'created_at', 'updated_at']
+    ordering = ['-created_at']
+    search_fields = ['name', 'contact_email', 'contact_phone', 'notes']
+
+class ChannelPartnerProgramFilter(filters.FilterSet):
+    channel_partner = filters.NumberFilter(field_name='channel_partner__id')
+    program = filters.NumberFilter(field_name='program__id')
+    is_active = filters.BooleanFilter(field_name='is_active')
+    
+    class Meta:
+        model = ChannelPartnerProgram
+        fields = ['channel_partner', 'program', 'is_active']
+
+class ChannelPartnerProgramViewSet(viewsets.ModelViewSet):
+    queryset = ChannelPartnerProgram.objects.all()
+    serializer_class = ChannelPartnerProgramSerializer
+    permission_classes = [IsAuthenticatedAndReadOnly]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_class = ChannelPartnerProgramFilter
+    ordering_fields = ['transfer_price', 'created_at', 'updated_at']
+    ordering = ['-created_at']
+    search_fields = ['notes']
+
+class ChannelPartnerStudentFilter(filters.FilterSet):
+    channel_partner = filters.NumberFilter(field_name='channel_partner__id')
+    batch = filters.NumberFilter(field_name='batch__id')
+    status = filters.CharFilter(field_name='status')
+    
+    class Meta:
+        model = ChannelPartnerStudent
+        fields = ['channel_partner', 'batch', 'status']
+
+class ChannelPartnerStudentViewSet(viewsets.ModelViewSet):
+    queryset = ChannelPartnerStudent.objects.all()
+    serializer_class = ChannelPartnerStudentSerializer
+    permission_classes = [IsAuthenticatedAndReadOnly]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_class = ChannelPartnerStudentFilter
+    ordering_fields = ['student_name', 'enrollment_date', 'created_at', 'updated_at']
+    ordering = ['-created_at']
+    search_fields = ['student_name', 'student_email', 'student_phone', 'notes']
+
+class StudentFilter(filters.FilterSet):
+    enrollment_source = filters.CharFilter(field_name='enrollment_source')
+    status = filters.CharFilter(field_name='status')
+    
+    class Meta:
+        model = Student
+        fields = ['enrollment_source', 'status']
+
+class StudentViewSet(viewsets.ModelViewSet):
+    queryset = Student.objects.all()
+    serializer_class = StudentSerializer
+    permission_classes = [IsAuthenticatedAndReadOnly]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_class = StudentFilter
+    ordering_fields = ['name', 'email', 'enrollment_source', 'status', 'created_at', 'updated_at']
+    ordering = ['name']
+    search_fields = ['name', 'email', 'phone', 'address', 'notes']

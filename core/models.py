@@ -529,3 +529,104 @@ class PaymentReminder(BaseModel):
 
     def __str__(self):
         return f'Reminder for {self.payment_schedule} on {self.scheduled_date}'
+
+class ChannelPartner(BaseModel):
+    name = models.CharField(max_length=255)
+    website = models.URLField(blank=True, null=True)
+    contact_email = models.EmailField()
+    contact_phone = models.CharField(max_length=20, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+    poc = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name='channel_partner_pocs')
+    commission_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0.00, help_text="Default commission rate in percentage")
+    status = models.CharField(max_length=20, choices=[
+        ('active', 'Active'),
+        ('inactive', 'Inactive'),
+    ], default='active')
+    notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return self.name
+
+    def clean(self):
+        if self.poc and not (self.poc.is_provider_poc() or self.poc.is_superuser):
+            raise ValidationError("The POC must be either a 'provider_poc' or a 'superuser'.")
+
+class ChannelPartnerProgram(BaseModel):
+    channel_partner = models.ForeignKey(ChannelPartner, on_delete=models.CASCADE, related_name='programs')
+    program = models.ForeignKey(Program, on_delete=models.CASCADE, related_name='channel_partners')
+    transfer_price = models.DecimalField(max_digits=12, decimal_places=2, help_text="Partner's transfer price for this program")
+    commission_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="Commission rate override for this program")
+    is_active = models.BooleanField(default=True)
+    start_date = models.DateField(null=True)
+    end_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True, null=True)
+
+    class Meta:
+        unique_together = ('channel_partner', 'program')
+
+    def __str__(self):
+        return f'{self.channel_partner.name} - {self.program.name}'
+
+    def get_effective_commission_rate(self):
+        """Returns the effective commission rate (override or partner's default)"""
+        return self.commission_rate if self.commission_rate is not None else self.channel_partner.commission_rate
+
+class Student(BaseModel):
+    name = models.CharField(max_length=255)
+    email = models.EmailField(unique=True)
+    phone = models.CharField(max_length=20, blank=True, null=True)
+    date_of_birth = models.DateField(null=True, blank=True)
+    address = models.TextField(blank=True, null=True)
+    enrollment_source = models.CharField(max_length=20, choices=[
+        ('direct', 'Direct'),
+        ('channel_partner', 'Channel Partner'),
+        ('university', 'University'),
+    ], default='direct')
+    status = models.CharField(max_length=20, choices=[
+        ('active', 'Active'),
+        ('completed', 'Completed'),
+        ('dropped', 'Dropped'),
+    ], default='active')
+    notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f'{self.name} ({self.email})'
+
+    class Meta:
+        ordering = ['name']
+
+class ChannelPartnerStudent(BaseModel):
+    channel_partner = models.ForeignKey(ChannelPartner, on_delete=models.CASCADE, related_name='students')
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='channel_partner_students')
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='channel_partner_enrollments')
+    enrollment_date = models.DateField()
+    transfer_price = models.DecimalField(max_digits=12, decimal_places=2, help_text="Actual transfer price for this student")
+    commission_amount = models.DecimalField(max_digits=12, decimal_places=2, help_text="Commission amount for this student")
+    status = models.CharField(max_length=20, choices=[
+        ('enrolled', 'Enrolled'),
+        ('completed', 'Completed'),
+        ('dropped', 'Dropped'),
+    ], default='enrolled')
+    notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f'{self.student.name} ({self.channel_partner.name})'
+
+    def save(self, *args, **kwargs):
+        if not self.pk:  # Only on creation
+            # Get the channel partner program for this batch's program
+            try:
+                partner_program = ChannelPartnerProgram.objects.get(
+                    channel_partner=self.channel_partner,
+                    program=self.batch.contract.programs.first()  # Assuming one program per contract
+                )
+                self.transfer_price = partner_program.transfer_price
+                self.commission_amount = self.transfer_price * (partner_program.get_effective_commission_rate() / 100)
+            except ChannelPartnerProgram.DoesNotExist:
+                raise ValidationError("No pricing found for this program and channel partner combination")
+            
+            # Update student's enrollment source
+            self.student.enrollment_source = 'channel_partner'
+            self.student.save()
+            
+        super().save(*args, **kwargs)
