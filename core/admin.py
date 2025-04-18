@@ -296,9 +296,14 @@ class ChannelPartnerProgramAdmin(admin.ModelAdmin):
 
 @admin.register(ChannelPartnerStudent)
 class ChannelPartnerStudentAdmin(admin.ModelAdmin):
-    list_display = ['student_name', 'channel_partner', 'batch', 'transfer_price', 'commission_amount', 'status']
-    search_fields = ['student_name', 'student_email', 'student_phone']
-    list_filter = ['status', 'created_at', 'updated_at']
+    list_display = ('get_student_name', 'channel_partner', 'batch', 'enrollment_date', 'transfer_price', 'commission_amount', 'status')
+    search_fields = ('student__name', 'student__email', 'channel_partner__name', 'batch__name')
+    list_filter = ('status', 'enrollment_date', 'channel_partner', 'batch')
+    ordering = ('-enrollment_date',)
+
+    def get_student_name(self, obj):
+        return obj.student.name
+    get_student_name.short_description = 'Student Name'
 
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
