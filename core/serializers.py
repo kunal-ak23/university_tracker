@@ -452,7 +452,13 @@ class ChannelPartnerStudentSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at']
 
 class ProgramBatchSerializer(serializers.ModelSerializer):
+    program_details = ProgramSerializer(source='program', read_only=True)
+    
     class Meta:
         model = ProgramBatch
-        fields = '__all__'
+        fields = [
+            'id', 'program', 'program_details', 'name', 'start_date', 
+            'end_date', 'number_of_students', 'cost_per_student', 
+            'status', 'notes', 'created_at', 'updated_at'
+        ]
         read_only_fields = ('created_at', 'updated_at')
