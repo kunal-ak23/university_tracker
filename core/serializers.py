@@ -422,34 +422,54 @@ class StudentSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at']
 
 class ChannelPartnerStudentSerializer(serializers.ModelSerializer):
-    channel_partner = ChannelPartnerSerializer(read_only=True)
-    channel_partner_id = serializers.PrimaryKeyRelatedField(
-        queryset=ChannelPartner.objects.all(),
-        source='channel_partner',
-        write_only=True
-    )
-    batch = BatchSerializer(read_only=True)
-    batch_id = serializers.PrimaryKeyRelatedField(
+    batch = serializers.PrimaryKeyRelatedField(
         queryset=Batch.objects.all(),
-        source='batch',
-        write_only=True
+        required=False,
+        allow_null=True
     )
-    student = StudentSerializer(read_only=True)
-    student_id = serializers.PrimaryKeyRelatedField(
-        queryset=Student.objects.all(),
-        source='student',
-        write_only=True
+    program_batch = serializers.PrimaryKeyRelatedField(
+        queryset=ProgramBatch.objects.all(),
+        required=False,
+        allow_null=True
     )
+    student = serializers.PrimaryKeyRelatedField(
+        queryset=Student.objects.all()
+    )
+    student_details = StudentSerializer(source='student', read_only=True)
+    channel_partner = serializers.PrimaryKeyRelatedField(
+        queryset=ChannelPartner.objects.all()
+    )
+    channel_partner_details = ChannelPartnerSerializer(source='channel_partner', read_only=True)
+    program_details = serializers.SerializerMethodField()
+
+    def get_program_details(self, obj):
+        if obj.batch:
+            program = obj.batch.contract.programs.first()
+        elif obj.program_batch:
+            program = obj.program_batch.program
+        else:
+            return None
+        
+        if program:
+            return ProgramSerializer(program).data
+        return None
+
+    def validate(self, data):
+        if not data.get('batch') and not data.get('program_batch'):
+            raise serializers.ValidationError("Either batch or program_batch must be specified")
+        if data.get('batch') and data.get('program_batch'):
+            raise serializers.ValidationError("Cannot specify both batch and program_batch")
+        return data
 
     class Meta:
         model = ChannelPartnerStudent
         fields = [
-            'id', 'channel_partner', 'channel_partner_id', 'batch',
-            'batch_id', 'student', 'student_id', 'enrollment_date',
-            'transfer_price', 'commission_amount', 'status', 'notes',
-            'created_at', 'updated_at'
+            'id', 'channel_partner', 'channel_partner_details', 
+            'batch', 'program_batch', 'student', 'student_details',
+            'program_details', 'enrollment_date', 'transfer_price', 
+            'commission_amount', 'status', 'notes', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['created_at', 'updated_at']
+        read_only_fields = ('transfer_price', 'commission_amount', 'created_at', 'updated_at')
 
 class ProgramBatchSerializer(serializers.ModelSerializer):
     program_details = ProgramSerializer(source='program', read_only=True)
