@@ -11,7 +11,7 @@ from django.utils.safestring import mark_safe
 from .logger_service import get_logger
 from .models import Billing, Payment, OEM, Program, University, Stream, TaxRate, Contract, ContractProgram, Batch, \
     Invoice, ContractFile, CustomUser, BatchSnapshot, PaymentDocument, PaymentScheduleRecipient, PaymentSchedule, \
-    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student
+    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch
 
 
 logger = get_logger()
@@ -311,3 +311,10 @@ class StudentAdmin(admin.ModelAdmin):
     search_fields = ['name', 'email', 'phone', 'address', 'notes']
     list_filter = ['enrollment_source', 'status', 'created_at', 'updated_at']
     ordering = ['name']
+
+@admin.register(ProgramBatch)
+class ProgramBatchAdmin(admin.ModelAdmin):
+    list_display = ('name', 'program', 'start_date', 'end_date', 'number_of_students', 'cost_per_student', 'status')
+    search_fields = ('name', 'program__name', 'notes')
+    list_filter = ('status', 'start_date', 'end_date', 'program')
+    ordering = ('-start_date',)

@@ -24,7 +24,7 @@ logger = get_logger()
 from .models import (
     OEM, Program, University, Stream, Contract, ContractProgram, Batch,
     Billing, Payment, ContractFile, TaxRate, CustomUser, Invoice, ChannelPartner,
-    ChannelPartnerProgram, ChannelPartnerStudent, Student
+    ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch
 )
 from .serializers import (
     OEMSerializer, ProgramSerializer, UniversitySerializer, StreamSerializer,
@@ -32,7 +32,8 @@ from .serializers import (
     PaymentSerializer, ContractFileSerializer, TaxRateSerializer, RegisterSerializer,
     UserSerializer, CustomTokenObtainPairSerializer, InvoiceSerializer, DashboardBillingSerializer,
     DashboardInvoiceSerializer, DashboardPaymentSerializer, ChannelPartnerSerializer,
-    ChannelPartnerProgramSerializer, ChannelPartnerStudentSerializer, StudentSerializer
+    ChannelPartnerProgramSerializer, ChannelPartnerStudentSerializer, StudentSerializer,
+    ProgramBatchSerializer
 )
 from .permissions import IsAuthenticatedAndReadOnly
 
@@ -849,3 +850,22 @@ class StudentViewSet(viewsets.ModelViewSet):
     ordering_fields = ['name', 'email', 'enrollment_source', 'status', 'created_at', 'updated_at']
     ordering = ['name']
     search_fields = ['name', 'email', 'phone', 'address', 'notes']
+
+class ProgramBatchFilter(filters.FilterSet):
+    program = filters.NumberFilter(field_name='program__id')
+    status = filters.CharFilter(field_name='status')
+    
+    class Meta:
+        model = ProgramBatch
+        fields = ['program', 'status']
+
+class ProgramBatchViewSet(viewsets.ModelViewSet):
+    queryset = ProgramBatch.objects.all()
+    serializer_class = ProgramBatchSerializer
+    permission_classes = [IsAuthenticatedAndReadOnly]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_class = ProgramBatchFilter
+    ordering_fields = ['name', 'start_date', 'end_date', 'status', 'created_at', 'updated_at']
+    ordering = ['-start_date']
+    search_fields = ['name', 'notes', 'program__name']

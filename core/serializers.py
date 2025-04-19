@@ -13,7 +13,7 @@ from .models import (
     OEM, Program, CustomUser, University, Contract, ContractProgram, Batch,
     Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice,
     PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient,
-    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student
+    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch
 )
 
 # Base serializers for models without dependencies
@@ -450,3 +450,9 @@ class ChannelPartnerStudentSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
+
+class ProgramBatchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProgramBatch
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at')

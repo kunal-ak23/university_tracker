@@ -595,9 +595,30 @@ class Student(BaseModel):
     class Meta:
         ordering = ['name']
 
+class ProgramBatch(BaseModel):
+    program = models.ForeignKey(Program, on_delete=models.CASCADE, related_name='program_batches')
+    name = models.CharField(max_length=255)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    number_of_students = models.PositiveIntegerField()
+    cost_per_student = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    status = models.CharField(max_length=20, choices=[
+        ('planned', 'Planned'),
+        ('ongoing', 'Ongoing'),
+        ('completed', 'Completed'),
+    ], default='planned')
+    notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f'{self.name} ({self.program.name})'
+
+    class Meta:
+        ordering = ['-start_date']
+
 class ChannelPartnerStudent(BaseModel):
     channel_partner = models.ForeignKey(ChannelPartner, on_delete=models.CASCADE, related_name='students')
-    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='channel_partner_students')
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='channel_partner_students', null=True, blank=True)
+    program_batch = models.ForeignKey(ProgramBatch, on_delete=models.CASCADE, related_name='channel_partner_students', null=True, blank=True)
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='channel_partner_enrollments')
     enrollment_date = models.DateField()
     transfer_price = models.DecimalField(max_digits=12, decimal_places=2, help_text="Actual transfer price for this student")
@@ -612,13 +633,24 @@ class ChannelPartnerStudent(BaseModel):
     def __str__(self):
         return f'{self.student.name} ({self.channel_partner.name})'
 
+    def clean(self):
+        if not (self.batch or self.program_batch):
+            raise ValidationError("Either batch or program_batch must be specified")
+        if self.batch and self.program_batch:
+            raise ValidationError("Cannot specify both batch and program_batch")
+
     def save(self, *args, **kwargs):
         if not self.pk:  # Only on creation
             # Get the channel partner program for this batch's program
             try:
+                if self.batch:
+                    program = self.batch.contract.programs.first()
+                else:
+                    program = self.program_batch.program
+                
                 partner_program = ChannelPartnerProgram.objects.get(
                     channel_partner=self.channel_partner,
-                    program=self.batch.contract.programs.first()  # Assuming one program per contract
+                    program=program
                 )
                 self.transfer_price = partner_program.transfer_price
                 self.commission_amount = self.transfer_price * (partner_program.get_effective_commission_rate() / 100)

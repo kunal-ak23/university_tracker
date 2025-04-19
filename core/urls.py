@@ -5,7 +5,8 @@ from .views import (
     OEMViewSet, ProgramViewSet, UniversityViewSet, ContractViewSet,
     BatchViewSet, BillingViewSet, PaymentViewSet, ContractFileViewSet,
     StreamViewSet, TaxRateViewSet, LoginView, RegisterView, UserViewSet,
-    InvoiceViewSet, DashboardViewSet
+    InvoiceViewSet, DashboardViewSet, StudentViewSet, ChannelPartnerViewSet,
+    ChannelPartnerProgramViewSet, ChannelPartnerStudentViewSet, ProgramBatchViewSet
 )
 
 router = DefaultRouter()
@@ -22,6 +23,11 @@ router.register(r'tax-rates', TaxRateViewSet)
 router.register(r'users', UserViewSet)
 router.register(r'invoices', InvoiceViewSet)
 router.register(r'dashboard', DashboardViewSet, basename='dashboard')
+router.register(r'students', StudentViewSet)
+router.register(r'channel-partners', ChannelPartnerViewSet)
+router.register(r'channel-partner-programs', ChannelPartnerProgramViewSet)
+router.register(r'channel-partner-students', ChannelPartnerStudentViewSet)
+router.register(r'program-batches', ProgramBatchViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
