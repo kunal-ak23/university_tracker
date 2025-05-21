@@ -50,8 +50,10 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',       # For RESTful APIs
+    'rest_framework_simplejwt',
     'corsheaders',
     'core',
+    'leads',
     'django_filters',
 ]
 

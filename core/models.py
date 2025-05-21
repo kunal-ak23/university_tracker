@@ -452,6 +452,7 @@ class CustomUser(AbstractUser):
     ROLE_CHOICES = [
         ('provider_poc', 'Provider POC'),
         ('university_poc', 'University POC'),
+        ('agent', 'Agent'),
     ]
 
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, blank=True, null=True)
@@ -469,6 +470,9 @@ class CustomUser(AbstractUser):
 
     def is_university_poc(self):
         return self.role == 'university_poc'
+
+    def is_agent(self):
+        return self.role == 'agent'
 
 class PaymentSchedule(BaseModel):
     FREQUENCY_CHOICES = [
