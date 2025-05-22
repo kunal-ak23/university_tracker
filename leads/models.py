@@ -26,6 +26,7 @@ class Lead(BaseModel):
         blank=True, 
         related_name='assigned_leads'
     )
+    created_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name='leads_created')
 
     def __str__(self):
         return f"{self.name} ({self.status})"

@@ -1,106 +1,158 @@
 # Leads Module Documentation
 
 ## Overview
-The Leads module is designed to manage and track potential students (leads) in the university tracking system. It provides a complete API for creating, reading, updating, and deleting lead information, with support for filtering, searching, and ordering.
+The Leads module provides functionality for managing leads in the system. It includes features for creating, viewing, updating, and deleting leads, with role-based access control and filtering capabilities.
 
-## Models
+## Model Structure
+The Lead model includes the following fields:
+- `name`: Lead's name
+- `mobile`: Contact number
+- `email`: Email address
+- `address`: Physical address
+- `status`: Current status of the lead
+- `notes`: Additional information
+- `agent`: The agent assigned to the lead
+- `assigned_to`: The user assigned to handle the lead
+- `created_by`: The user who created the lead
+- `created_at`: Timestamp of creation
+- `updated_at`: Timestamp of last update
 
-### Lead
+## Role-Based Access Control
+The leads module implements role-based access control with the following permissions:
+
+### Admin Users
+- Can view all leads
+- Can create, update, and delete any lead
+- Full access to all lead operations
+
+### Agent Users
+- Can only view their own leads (leads where they are the agent)
+- Can create new leads (automatically assigned to them)
+- Can update and delete their own leads
+- Cannot access leads created by other agents
+
+### POC Users
+- No access to leads
+- Cannot view, create, update, or delete leads
+
+## Authentication
+All endpoints require JWT (JSON Web Token) authentication. Here's how to authenticate:
+
+### Getting a Token
 ```python
-class Lead(models.Model):
-    name = models.CharField(max_length=255)
-    mobile = models.CharField(max_length=15)
-    email = models.EmailField()
-    address = models.TextField(blank=True)
-    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='new')
-    notes = models.TextField(blank=True)
-    agent = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='created_leads')
-    assigned_to = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_leads')
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+import requests
+
+# Login to get the token
+login_data = {
+    "username": "your_username",
+    "password": "your_password"
+}
+
+# Replace with your actual domain
+login_url = "http://your-domain/api/token/"
+
+# Get the token
+response = requests.post(login_url, json=login_data)
+tokens = response.json()
+
+# Extract the access token
+access_token = tokens['access']
 ```
+
+### Using the Token
+Include the token in the Authorization header of all requests:
+```python
+headers = {
+    'Authorization': f'Bearer {access_token}',
+    'Content-Type': 'application/json'
+}
+```
+
+Note: The access token expires after 60 minutes. You'll need to either:
+1. Get a new token by logging in again
+2. Use the refresh token to get a new access token
 
 ## API Endpoints
 
-### List/Create Leads
+### 1. List/Create Leads
 - **URL**: `/api/leads/`
 - **Method**: GET, POST
 - **Authentication**: Required (JWT Token)
 - **Permissions**: 
-  - Superusers can see all leads
-  - Agents can only see their own leads
+  - Admin users can see all leads
+  - Agents can only see their assigned leads
+  - POC users cannot access leads
 
 #### Query Parameters
 - `status`: Filter by lead status
 - `agent`: Filter by agent ID
 - `assigned_to`: Filter by assigned user ID
+- `created_by`: Filter by creator ID
 - `search`: Search in name, mobile, email, address, notes
-- `ordering`: Order by name, status, created_at, updated_at
+- `ordering`: Sort by any field (prefix with '-' for descending)
 
-#### Example Request Body (POST)
+#### Example Response
 ```json
 {
-    "name": "John Doe",
-    "mobile": "+1234567890",
-    "email": "john@example.com",
-    "address": "123 Main St",
-    "status": "new",
-    "notes": "Interested in Data Science program",
-    "assigned_to": 1
+    "count": 1,
+    "results": [
+        {
+            "id": 1,
+            "name": "John Doe",
+            "mobile": "1234567890",
+            "email": "john@example.com",
+            "address": "123 Main St",
+            "status": "new",
+            "notes": "Interested in Python course",
+            "agent": 1,
+            "agent_details": {
+                "id": 1,
+                "name": "Agent Name",
+                "email": "agent@example.com"
+            },
+            "assigned_to": 2,
+            "assigned_to_details": {
+                "id": 2,
+                "name": "Assigned User",
+                "email": "assigned@example.com"
+            },
+            "created_by": 1,
+            "created_by_details": {
+                "id": 1,
+                "name": "Creator Name",
+                "email": "creator@example.com"
+            },
+            "created_at": "2024-03-20T10:00:00Z",
+            "updated_at": "2024-03-20T10:00:00Z"
+        }
+    ]
 }
 ```
 
-### Get/Update/Delete Single Lead
+### 2. Get/Update/Delete Single Lead
 - **URL**: `/api/leads/{id}/`
 - **Method**: GET, PUT, PATCH, DELETE
 - **Authentication**: Required (JWT Token)
-- **Permissions**: Same as List/Create
+- **Permissions**: Same as List/Create endpoint
 
 ## Features
+1. Role-based access control
+2. Automatic assignment of created_by field
+3. Full search and filtering capabilities
+4. Status tracking
+5. Detailed notes and information
+6. Pagination support
 
-### Filtering
-- Filter leads by status
-- Filter by agent
-- Filter by assigned user
-
-### Search
-- Search in name
-- Search in mobile
-- Search in email
-- Search in address
-- Search in notes
-
-### Ordering
-- Order by name
-- Order by status
-- Order by created_at
-- Order by updated_at
-- Default ordering: -created_at (newest first)
-
-### Automatic Features
-- Automatic assignment of agent on lead creation
-- Automatic timestamp management (created_at, updated_at)
-
-## Admin Interface
-The leads module is integrated with Django's admin interface with the following features:
-- List display: name, mobile, email, status, agent, assigned_to, created_at
-- List filters: status, agent, assigned_to, created_at
-- Search fields: name, mobile, email, address, notes
-- Default ordering: -created_at
-
-## Security
-- JWT Authentication required for all endpoints
-- Role-based access control:
-  - Superusers can access all leads
-  - Agents can only access their own leads
-- Input validation through serializers
-- Proper permission checks on all operations
+## Security Considerations
+1. All endpoints require authentication
+2. Role-based permissions are enforced
+3. Agents can only access their assigned leads
+4. Admin users have full access to all leads
 
 ## Usage Examples
 
 ### Creating a New Lead
 ```python
-# Using requests library
 import requests
 
 headers = {
@@ -109,27 +161,27 @@ headers = {
 }
 
 data = {
-    "name": "John Doe",
-    "mobile": "+1234567890",
-    "email": "john@example.com",
-    "address": "123 Main St",
-    "status": "new",
-    "notes": "Interested in Data Science program"
+    'name': 'John Doe',
+    'mobile': '1234567890',
+    'email': 'john@example.com',
+    'address': '123 Main St',
+    'status': 'new',
+    'notes': 'Interested in Python course'
 }
 
-response = requests.post('http://your-domain/api/leads/', headers=headers, json=data)
+response = requests.post('http://your-domain/api/leads/', json=data, headers=headers)
 ```
 
-### Filtering Leads
+### Searching Leads
 ```python
-# Get all leads with status 'new'
+# Search by status
 response = requests.get('http://your-domain/api/leads/?status=new', headers=headers)
 
-# Search for leads with 'john' in name or email
-response = requests.get('http://your-domain/api/leads/?search=john', headers=headers)
+# Search by creator
+response = requests.get('http://your-domain/api/leads/?created_by=1', headers=headers)
 
-# Get leads ordered by creation date
-response = requests.get('http://your-domain/api/leads/?ordering=-created_at', headers=headers)
+# Search by text
+response = requests.get('http://your-domain/api/leads/?search=python', headers=headers)
 ```
 
 ## Error Handling
@@ -137,7 +189,7 @@ The API returns appropriate HTTP status codes and error messages:
 - 400: Bad Request (invalid data)
 - 401: Unauthorized (missing/invalid token)
 - 403: Forbidden (insufficient permissions)
-- 404: Not Found (lead not found)
+- 404: Not Found (lead doesn't exist)
 - 500: Internal Server Error
 
 ## Dependencies

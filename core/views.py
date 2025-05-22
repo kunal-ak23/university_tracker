@@ -18,6 +18,7 @@ from calendar import monthrange
 from django.utils import timezone
 from django.db.models import Sum, Count, Q
 from django.db.models.functions import TruncMonth
+from django.contrib.auth import get_user_model
 
 logger = get_logger()
 
@@ -383,37 +384,53 @@ class TaxRateViewSet(viewsets.ModelViewSet):
 
 class LoginView(TokenObtainPairView):
     permission_classes = [AllowAny]
+    serializer_class = CustomTokenObtainPairSerializer
     
     def post(self, request, *args, **kwargs):
-        response = super().post(request, *args, **kwargs)
-        if response.status_code == 200:
-            # Get user by email or username
-            lookup_field = request.data.get('email', request.data.get('username'))
-            if '@' in lookup_field:
-                user = CustomUser.objects.get(email=lookup_field)
-            else:
-                user = CustomUser.objects.get(username=lookup_field)
+        try:
+            # First try to authenticate with the provided credentials
+            response = super().post(request, *args, **kwargs)
             
-            # Determine role
-            if user.is_superuser:
-                role = 'admin'
-            elif user.role == 'university_poc':
-                role = 'university_poc'
-            elif user.role == 'provider_poc':
-                role = 'provider_poc'
-            else:
-                role = 'user'
+            if response.status_code == 200:
+                # Get user by email or username
+                lookup_field = request.data.get('email', request.data.get('username'))
+                
+                try:
+                    if '@' in lookup_field:
+                        user = CustomUser.objects.get(email=lookup_field)
+                    else:
+                        user = CustomUser.objects.get(username=lookup_field)
+
+                    # Determine role
+                    if user.is_superuser:
+                        role = 'admin'
+                    else:
+                        role = user.role
+
+                    # Add user info to response
+                    response.data.update({
+                        'role': role,
+                        'user_id': user.id,
+                        'email': user.email,
+                        'first_name': user.first_name,
+                        'last_name': user.last_name,
+                        'full_name': f"{user.first_name} {user.last_name}".strip() or user.email
+                    })
+                    
+                except CustomUser.DoesNotExist:
+                    return Response(
+                        {'error': 'User not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                    
+            return response
             
-            # Add role and user info to response
-            response.data['role'] = role
-            response.data['user'] = {
-                'id': user.id,
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-            }
-        
-        return response
+        except Exception as e:
+            logger.error(f"Login error: {str(e)}")
+            return Response(
+                {'error': 'Invalid credentials'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
 
 class RegisterView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
