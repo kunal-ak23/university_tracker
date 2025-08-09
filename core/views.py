@@ -38,7 +38,7 @@ from .serializers import (
     ProgramBatchSerializer, UniversityEventSerializer, UniversityEventApprovalSerializer,
     UniversityEventSubmissionSerializer, UniversityEventInviteeSerializer
 )
-from .permissions import IsAuthenticatedAndReadOnly
+from .permissions import IsAuthenticatedAndReadOnly, IsAuthenticatedWithRoleBasedAccess
 
 class StandardResultsSetPagination(PageNumberPagination):
     page_size = 20
@@ -65,7 +65,7 @@ class ContractFilter(filters.FilterSet):
 class OEMViewSet(viewsets.ModelViewSet):
     queryset = OEM.objects.all()
     serializer_class = OEMSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     ordering_fields = ['name', 'created_at', 'updated_at']
@@ -75,7 +75,7 @@ class OEMViewSet(viewsets.ModelViewSet):
 class ProgramViewSet(viewsets.ModelViewSet):
     queryset = Program.objects.all()
     serializer_class = ProgramSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = ProgramFilter
@@ -86,7 +86,7 @@ class ProgramViewSet(viewsets.ModelViewSet):
 class UniversityViewSet(viewsets.ModelViewSet):
     queryset = University.objects.all()
     serializer_class = UniversitySerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     ordering_fields = ['name', 'established_year', 'created_at', 'updated_at']
@@ -103,7 +103,7 @@ class StreamFilter(filters.FilterSet):
 class StreamViewSet(viewsets.ModelViewSet):
     queryset = Stream.objects.all()
     serializer_class = StreamSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = StreamFilter
@@ -114,7 +114,7 @@ class StreamViewSet(viewsets.ModelViewSet):
 class ContractViewSet(viewsets.ModelViewSet):
     queryset = Contract.objects.all()
     serializer_class = ContractSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = ContractFilter
@@ -277,7 +277,7 @@ class ContractViewSet(viewsets.ModelViewSet):
 class ContractProgramViewSet(viewsets.ModelViewSet):
     queryset = ContractProgram.objects.all()
     serializer_class = ContractProgramSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
 
 class BatchFilter(filters.FilterSet):
     stream = filters.NumberFilter(field_name='stream__id')
@@ -291,7 +291,7 @@ class BatchFilter(filters.FilterSet):
 class BatchViewSet(viewsets.ModelViewSet):
     queryset = Batch.objects.all()
     serializer_class = BatchSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = BatchFilter
@@ -302,7 +302,7 @@ class BatchViewSet(viewsets.ModelViewSet):
 class BillingViewSet(viewsets.ModelViewSet):
     queryset = Billing.objects.all()
     serializer_class = BillingSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     ordering_fields = ['name', 'created_at', 'updated_at', 'status']
@@ -368,12 +368,12 @@ class BillingViewSet(viewsets.ModelViewSet):
 class PaymentViewSet(viewsets.ModelViewSet):
     queryset = Payment.objects.all()
     serializer_class = PaymentSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
 
 class ContractFileViewSet(viewsets.ModelViewSet):
     queryset = ContractFile.objects.all()
     serializer_class = ContractFileSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     parser_classes = (MultiPartParser, FormParser)
 
     def perform_create(self, serializer):
@@ -382,7 +382,7 @@ class ContractFileViewSet(viewsets.ModelViewSet):
 class TaxRateViewSet(viewsets.ModelViewSet):
     queryset = TaxRate.objects.all()
     serializer_class = TaxRateSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
 
 class LoginView(TokenObtainPairView):
     permission_classes = [AllowAny]
@@ -495,7 +495,7 @@ class UserFilter(filters.FilterSet):
 # Add UserViewSet
 class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     filter_backends = [filters.DjangoFilterBackend]
     filterset_class = UserFilter
     queryset = CustomUser.objects.all().prefetch_related(
@@ -521,7 +521,7 @@ class UserViewSet(viewsets.ModelViewSet):
 class InvoiceViewSet(viewsets.ModelViewSet):
     queryset = Invoice.objects.all()
     serializer_class = InvoiceSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     ordering_fields = ['issue_date', 'due_date', 'amount', 'status', 'created_at']
@@ -639,7 +639,7 @@ class LogoutView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class DashboardViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
 
     @action(detail=False, methods=['get'])
     def summary(self, request):
@@ -803,7 +803,7 @@ class ChannelPartnerFilter(filters.FilterSet):
 class ChannelPartnerViewSet(viewsets.ModelViewSet):
     queryset = ChannelPartner.objects.all()
     serializer_class = ChannelPartnerSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = ChannelPartnerFilter
@@ -823,7 +823,7 @@ class ChannelPartnerProgramFilter(filters.FilterSet):
 class ChannelPartnerProgramViewSet(viewsets.ModelViewSet):
     queryset = ChannelPartnerProgram.objects.all()
     serializer_class = ChannelPartnerProgramSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = ChannelPartnerProgramFilter
@@ -843,7 +843,7 @@ class ChannelPartnerStudentFilter(filters.FilterSet):
 class ChannelPartnerStudentViewSet(viewsets.ModelViewSet):
     queryset = ChannelPartnerStudent.objects.all()
     serializer_class = ChannelPartnerStudentSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = ChannelPartnerStudentFilter
@@ -862,7 +862,7 @@ class StudentFilter(filters.FilterSet):
 class StudentViewSet(viewsets.ModelViewSet):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = StudentFilter
@@ -881,7 +881,7 @@ class ProgramBatchFilter(filters.FilterSet):
 class ProgramBatchViewSet(viewsets.ModelViewSet):
     queryset = ProgramBatch.objects.all()
     serializer_class = ProgramBatchSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = ProgramBatchFilter
@@ -906,7 +906,7 @@ class UniversityEventFilter(filters.FilterSet):
 class UniversityEventViewSet(viewsets.ModelViewSet):
     queryset = UniversityEvent.objects.all()
     serializer_class = UniversityEventSerializer
-    permission_classes = [IsAuthenticatedAndReadOnly]
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = UniversityEventFilter
