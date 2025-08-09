@@ -11,7 +11,7 @@ from django.utils.safestring import mark_safe
 from .logger_service import get_logger
 from .models import Billing, Payment, OEM, Program, University, Stream, TaxRate, Contract, ContractProgram, Batch, \
     Invoice, ContractFile, CustomUser, BatchSnapshot, PaymentDocument, PaymentScheduleRecipient, PaymentSchedule, \
-    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch
+    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch, UniversityEvent
 
 
 logger = get_logger()
@@ -318,3 +318,107 @@ class ProgramBatchAdmin(admin.ModelAdmin):
     search_fields = ('name', 'program__name', 'notes')
     list_filter = ('status', 'start_date', 'end_date', 'program')
     ordering = ('-start_date',)
+
+
+
+
+@admin.register(UniversityEvent)
+class UniversityEventAdmin(admin.ModelAdmin):
+    list_display = [
+        'title', 'university', 'start_datetime', 'end_datetime', 
+        'location', 'status', 'integration_status', 'created_by', 'approved_by'
+    ]
+    list_filter = [
+        'status', 'integration_status', 'university', 'batch', 
+        'start_datetime', 'end_datetime', 'created_at', 'updated_at'
+    ]
+    search_fields = [
+        'title', 'description', 'location', 'notes', 
+        'university__name', 'batch__name', 'created_by__username'
+    ]
+    readonly_fields = [
+        'created_at', 'updated_at', 'version', 'submitted_for_approval_at',
+        'approved_at', 'outlook_calendar_id', 'outlook_calendar_url',
+        'notion_page_id', 'notion_page_url', 'integration_notes'
+    ]
+    fieldsets = (
+        ('Event Information', {
+            'fields': ('title', 'description', 'start_datetime', 'end_datetime', 'location')
+        }),
+        ('Organization', {
+            'fields': ('university', 'batch', 'created_by')
+        }),
+        ('Status & Approval', {
+            'fields': ('status', 'submitted_for_approval_at', 'approved_by', 'approved_at', 'rejection_reason')
+        }),
+        ('Integration', {
+            'fields': ('integration_status', 'outlook_calendar_id', 'outlook_calendar_url', 
+                      'notion_page_id', 'notion_page_url', 'integration_notes'),
+            'classes': ('collapse',)
+        }),
+        ('Additional Information', {
+            'fields': ('notes', 'created_at', 'updated_at', 'version'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    ordering = ['-start_datetime']
+    date_hierarchy = 'start_datetime'
+    
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs
+        if request.user.is_university_poc():
+            return qs.filter(university__poc=request.user)
+        if request.user.is_provider_poc():
+            return qs.filter(batch__contract__oem__poc=request.user)
+        return qs.none()
+
+    def save_model(self, request, obj, form, change):
+        if not change:  # Creating new event
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    actions = ['approve_events', 'reject_events', 'update_status']
+
+    @admin.action(description='Approve selected events')
+    def approve_events(self, request, queryset):
+        approved_count = 0
+        for event in queryset.filter(status='pending_approval'):
+            try:
+                event.approve(request.user)
+                approved_count += 1
+            except Exception as e:
+                self.message_user(request, f"Failed to approve event {event.title}: {str(e)}", level='ERROR')
+        
+        if approved_count > 0:
+            self.message_user(request, f"Successfully approved {approved_count} events.")
+
+    @admin.action(description='Reject selected events')
+    def reject_events(self, request, queryset):
+        rejected_count = 0
+        for event in queryset.filter(status='pending_approval'):
+            try:
+                event.reject(request.user, "Rejected via admin action")
+                rejected_count += 1
+            except Exception as e:
+                self.message_user(request, f"Failed to reject event {event.title}: {str(e)}", level='ERROR')
+        
+        if rejected_count > 0:
+            self.message_user(request, f"Successfully rejected {rejected_count} events.")
+
+    @admin.action(description='Update status based on current time')
+    def update_status(self, request, queryset):
+        updated_count = 0
+        for event in queryset.filter(status='approved'):
+            try:
+                event.update_status()
+                updated_count += 1
+            except Exception as e:
+                self.message_user(request, f"Failed to update status for event {event.title}: {str(e)}", level='ERROR')
+        
+        if updated_count > 0:
+            self.message_user(request, f"Successfully updated status for {updated_count} events.")
+
+

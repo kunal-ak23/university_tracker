@@ -6,7 +6,8 @@ from .views import (
     BatchViewSet, BillingViewSet, PaymentViewSet, ContractFileViewSet,
     StreamViewSet, TaxRateViewSet, LoginView, RegisterView, UserViewSet,
     InvoiceViewSet, DashboardViewSet, StudentViewSet, ChannelPartnerViewSet,
-    ChannelPartnerProgramViewSet, ChannelPartnerStudentViewSet, ProgramBatchViewSet
+    ChannelPartnerProgramViewSet, ChannelPartnerStudentViewSet, ProgramBatchViewSet,
+    UniversityEventViewSet
 )
 
 router = DefaultRouter()
@@ -28,6 +29,7 @@ router.register(r'channel-partners', ChannelPartnerViewSet)
 router.register(r'channel-partner-programs', ChannelPartnerProgramViewSet)
 router.register(r'channel-partner-students', ChannelPartnerStudentViewSet)
 router.register(r'program-batches', ProgramBatchViewSet)
+router.register(r'university-events', UniversityEventViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

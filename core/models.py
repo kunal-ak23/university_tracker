@@ -44,6 +44,19 @@ def log_model_changes(sender, instance, **kwargs):
             logger.info(f'{sender.__name__} {instance.pk} changes: {"; ".join(changes)}')
 
 
+@receiver(post_save, sender='core.UniversityEvent')
+def handle_event_approval(sender, instance, created, **kwargs):
+    """Handle post-save actions for UniversityEvent"""
+    if not created and instance.status == 'approved':
+        # Trigger integration tasks when event is approved
+        from .services import trigger_event_integrations
+        try:
+            trigger_event_integrations(instance)
+        except Exception as e:
+            logger.error(f"Failed to trigger integrations for event {instance.id}: {str(e)}")
+            instance.mark_integration_failed(f"Integration trigger failed: {str(e)}")
+
+
 class OEM(BaseModel):
     name = models.CharField(max_length=255)
     website = models.URLField()
@@ -102,6 +115,267 @@ class University(BaseModel):
     def clean(self):
         if self.poc and not (self.poc.is_university_poc() or self.poc.is_superuser):
             raise ValidationError("The POC must be either a 'university_poc' or a 'superuser'.")
+
+
+class UniversityEvent(BaseModel):
+    EVENT_STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('pending_approval', 'Pending Approval'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('upcoming', 'Upcoming'),
+        ('ongoing', 'Ongoing'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    university = models.ForeignKey(University, on_delete=models.CASCADE, related_name='events')
+    title = models.CharField(max_length=255)
+    description = models.TextField()
+    start_datetime = models.DateTimeField()
+    end_datetime = models.DateTimeField()
+    location = models.CharField(max_length=500)
+    batch = models.ForeignKey('Batch', on_delete=models.SET_NULL, null=True, blank=True, related_name='events')
+    status = models.CharField(max_length=20, choices=EVENT_STATUS_CHOICES, default='draft')
+    created_by = models.ForeignKey('CustomUser', on_delete=models.CASCADE, related_name='created_events')
+    notes = models.TextField(blank=True, null=True)
+    
+    # Invitees field - comma separated email IDs
+    invitees = models.TextField(blank=True, null=True, help_text="Comma separated email addresses")
+    
+    # Approval fields
+    submitted_for_approval_at = models.DateTimeField(blank=True, null=True)
+    approved_by = models.ForeignKey('CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_events')
+    approved_at = models.DateTimeField(blank=True, null=True)
+    rejection_reason = models.TextField(blank=True, null=True)
+    
+    # Integration tracking fields
+    outlook_calendar_id = models.CharField(max_length=255, blank=True, null=True, help_text="Outlook Calendar Event ID")
+    outlook_calendar_url = models.URLField(blank=True, null=True, help_text="Outlook Calendar Event URL")
+    notion_page_id = models.CharField(max_length=255, blank=True, null=True, help_text="Notion Page ID")
+    notion_page_url = models.URLField(blank=True, null=True, help_text="Notion Page URL")
+    integration_status = models.CharField(max_length=20, choices=[
+        ('pending', 'Pending'),
+        ('outlook_created', 'Outlook Created'),
+        ('notion_created', 'Notion Created'),
+        ('both_created', 'Both Created'),
+        ('failed', 'Failed'),
+    ], default='pending')
+    integration_notes = models.TextField(blank=True, null=True, help_text="Notes about integration status")
+
+    class Meta:
+        ordering = ['start_datetime']
+        verbose_name = 'University Event'
+        verbose_name_plural = 'University Events'
+
+    def __str__(self):
+        return f'{self.title} - {self.university.name} ({self.start_datetime.strftime("%Y-%m-%d %H:%M")})'
+
+    def clean(self):
+        if self.start_datetime and self.end_datetime:
+            if self.start_datetime >= self.end_datetime:
+                raise ValidationError("End datetime must be after start datetime.")
+        
+        if self.batch and self.batch.contract.university != self.university:
+            raise ValidationError("The selected batch must belong to this university.")
+
+    def get_invitees(self):
+        """Returns list of people to whom invites should be extended"""
+        invitees = []
+        
+        # Add university POC
+        if self.university.poc:
+            invitees.append({
+                'name': self.university.poc.get_full_name() or self.university.poc.username,
+                'email': self.university.poc.email,
+                'role': 'University POC'
+            })
+        
+        # Add OEM POC if batch is associated
+        if self.batch and self.batch.contract.oem.poc:
+            invitees.append({
+                'name': self.batch.contract.oem.poc.get_full_name() or self.batch.contract.oem.poc.username,
+                'email': self.batch.contract.oem.poc.email,
+                'role': 'OEM POC'
+            })
+        
+        # Add batch-specific invitees if batch is associated
+        if self.batch:
+            # Add channel partner POCs for this batch
+            for cps in self.batch.channel_partner_students.select_related('channel_partner__poc').distinct('channel_partner'):
+                if cps.channel_partner.poc:
+                    invitees.append({
+                        'name': cps.channel_partner.poc.get_full_name() or cps.channel_partner.poc.username,
+                        'email': cps.channel_partner.poc.email,
+                        'role': f'Channel Partner POC ({cps.channel_partner.name})'
+                    })
+        
+        # Add custom invitees from comma-separated field
+        if self.invitees:
+            custom_emails = [email.strip() for email in self.invitees.split(',') if email.strip()]
+            for email in custom_emails:
+                invitees.append({
+                    'name': email,  # Use email as name if no additional info
+                    'email': email,
+                    'role': 'Custom Invitee'
+                })
+        
+        return invitees
+
+    def get_invitee_emails(self):
+        """Returns list of email addresses for the event"""
+        emails = []
+        
+        # Add automatic invitees
+        for invitee in self.get_invitees():
+            emails.append(invitee['email'])
+        
+        return emails
+
+    def add_invitee(self, email):
+        """Add an email to the invitees list"""
+        if not self.invitees:
+            self.invitees = email
+        else:
+            # Check if email already exists
+            existing_emails = [e.strip() for e in self.invitees.split(',')]
+            if email not in existing_emails:
+                self.invitees = f"{self.invitees}, {email}"
+        self.save(update_fields=['invitees'])
+
+    def remove_invitee(self, email):
+        """Remove an email from the invitees list"""
+        if self.invitees:
+            emails = [e.strip() for e in self.invitees.split(',')]
+            if email in emails:
+                emails.remove(email)
+                self.invitees = ', '.join(emails) if emails else None
+                self.save(update_fields=['invitees'])
+
+    def is_upcoming(self):
+        """Check if event is upcoming (not started yet)"""
+        from django.utils import timezone
+        return self.start_datetime > timezone.now()
+
+    def is_ongoing(self):
+        """Check if event is currently ongoing"""
+        from django.utils import timezone
+        now = timezone.now()
+        return self.start_datetime <= now <= self.end_datetime
+
+    def is_completed(self):
+        """Check if event has completed"""
+        from django.utils import timezone
+        return self.end_datetime < timezone.now()
+
+    def submit_for_approval(self):
+        """Submit event for approval"""
+        from django.utils import timezone
+        
+        if self.status != 'draft':
+            raise ValidationError("Only draft events can be submitted for approval.")
+        
+        self.status = 'pending_approval'
+        self.submitted_for_approval_at = timezone.now()
+        self.save(update_fields=['status', 'submitted_for_approval_at'])
+
+    def approve(self, approved_by_user):
+        """Approve the event"""
+        from django.utils import timezone
+        
+        if self.status != 'pending_approval':
+            raise ValidationError("Only pending approval events can be approved.")
+        
+        if not (approved_by_user.is_university_poc() or approved_by_user.is_superuser):
+            raise ValidationError("Only university POCs or superusers can approve events.")
+        
+        self.status = 'approved'
+        self.approved_by = approved_by_user
+        self.approved_at = timezone.now()
+        self.save(update_fields=['status', 'approved_by', 'approved_at'])
+
+    def reject(self, rejected_by_user, reason):
+        """Reject the event"""
+        from django.utils import timezone
+        
+        if self.status != 'pending_approval':
+            raise ValidationError("Only pending approval events can be rejected.")
+        
+        if not (rejected_by_user.is_university_poc() or rejected_by_user.is_superuser):
+            raise ValidationError("Only university POCs or superusers can reject events.")
+        
+        self.status = 'rejected'
+        self.rejection_reason = reason
+        self.save(update_fields=['status', 'rejection_reason'])
+
+    def update_status(self):
+        """Update event status based on current time (only for approved events)"""
+        from django.utils import timezone
+        now = timezone.now()
+        
+        # Only update status for approved events
+        if self.status == 'approved':
+            if self.is_completed():
+                self.status = 'completed'
+            elif self.is_ongoing():
+                self.status = 'ongoing'
+            elif self.is_upcoming():
+                self.status = 'upcoming'
+            
+            self.save(update_fields=['status'])
+
+    def mark_outlook_created(self, calendar_id, calendar_url):
+        """Mark Outlook calendar event as created"""
+        self.outlook_calendar_id = calendar_id
+        self.outlook_calendar_url = calendar_url
+        
+        if self.integration_status == 'pending':
+            self.integration_status = 'outlook_created'
+        elif self.integration_status == 'notion_created':
+            self.integration_status = 'both_created'
+        
+        self.save(update_fields=['outlook_calendar_id', 'outlook_calendar_url', 'integration_status'])
+
+    def mark_notion_created(self, page_id, page_url):
+        """Mark Notion page as created"""
+        self.notion_page_id = page_id
+        self.notion_page_url = page_url
+        
+        if self.integration_status == 'pending':
+            self.integration_status = 'notion_created'
+        elif self.integration_status == 'outlook_created':
+            self.integration_status = 'both_created'
+        
+        self.save(update_fields=['notion_page_id', 'notion_page_url', 'integration_status'])
+
+    def mark_integration_failed(self, error_message):
+        """Mark integration as failed"""
+        self.integration_status = 'failed'
+        self.integration_notes = error_message
+        self.save(update_fields=['integration_status', 'integration_notes'])
+
+    def can_be_approved(self):
+        """Check if event can be approved"""
+        return self.status == 'pending_approval'
+
+    def can_be_rejected(self):
+        """Check if event can be rejected"""
+        return self.status == 'pending_approval'
+
+    def can_be_submitted(self):
+        """Check if event can be submitted for approval"""
+        return self.status == 'draft'
+
+    def is_approved(self):
+        """Check if event is approved"""
+        return self.status == 'approved'
+
+    def is_pending_approval(self):
+        """Check if event is pending approval"""
+        return self.status == 'pending_approval'
+
+
+
 
 class Stream(BaseModel):
     DURATION_UNIT_CHOICES = [

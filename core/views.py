@@ -25,7 +25,8 @@ logger = get_logger()
 from .models import (
     OEM, Program, University, Stream, Contract, ContractProgram, Batch,
     Billing, Payment, ContractFile, TaxRate, CustomUser, Invoice, ChannelPartner,
-    ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch
+    ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
+    UniversityEvent
 )
 from .serializers import (
     OEMSerializer, ProgramSerializer, UniversitySerializer, StreamSerializer,
@@ -34,7 +35,8 @@ from .serializers import (
     UserSerializer, CustomTokenObtainPairSerializer, InvoiceSerializer, DashboardBillingSerializer,
     DashboardInvoiceSerializer, DashboardPaymentSerializer, ChannelPartnerSerializer,
     ChannelPartnerProgramSerializer, ChannelPartnerStudentSerializer, StudentSerializer,
-    ProgramBatchSerializer
+    ProgramBatchSerializer, UniversityEventSerializer, UniversityEventApprovalSerializer,
+    UniversityEventSubmissionSerializer, UniversityEventInviteeSerializer
 )
 from .permissions import IsAuthenticatedAndReadOnly
 
@@ -886,3 +888,154 @@ class ProgramBatchViewSet(viewsets.ModelViewSet):
     ordering_fields = ['name', 'start_date', 'end_date', 'status', 'created_at', 'updated_at']
     ordering = ['-start_date']
     search_fields = ['name', 'notes', 'program__name']
+
+class UniversityEventFilter(filters.FilterSet):
+    university = filters.NumberFilter(field_name='university__id')
+    batch = filters.NumberFilter(field_name='batch__id')
+    status = filters.CharFilter(field_name='status')
+    created_by = filters.NumberFilter(field_name='created_by__id')
+    approved_by = filters.NumberFilter(field_name='approved_by__id')
+    start_date = filters.DateFilter(field_name='start_datetime', lookup_expr='gte')
+    end_date = filters.DateFilter(field_name='end_datetime', lookup_expr='lte')
+    
+    class Meta:
+        model = UniversityEvent
+        fields = ['university', 'batch', 'status', 'created_by', 'approved_by', 'start_date', 'end_date']
+
+
+class UniversityEventViewSet(viewsets.ModelViewSet):
+    queryset = UniversityEvent.objects.all()
+    serializer_class = UniversityEventSerializer
+    permission_classes = [IsAuthenticatedAndReadOnly]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_class = UniversityEventFilter
+    ordering_fields = ['title', 'start_datetime', 'end_datetime', 'status', 'created_at', 'updated_at']
+    ordering = ['-start_datetime']  # upcoming events first
+    search_fields = ['title', 'description', 'location', 'notes', 'university__name', 'batch__name']
+
+    def get_queryset(self):
+        """Filter queryset based on user permissions"""
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # If user is university POC, show only events for their university
+        if user.is_university_poc():
+            queryset = queryset.filter(university__poc=user)
+        # If user is provider POC, show events for their OEMs
+        elif user.is_provider_poc():
+            queryset = queryset.filter(batch__contract__oem__poc=user)
+        
+        return queryset.select_related(
+            'university', 'batch', 'created_by', 'approved_by'
+        )
+
+    @action(detail=True, methods=['post'])
+    def submit_for_approval(self, request, pk=None):
+        """Submit event for approval"""
+        event = self.get_object()
+        
+        try:
+            event.submit_for_approval()
+            return Response({
+                'message': 'Event submitted for approval successfully.',
+                'status': event.status
+            }, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Approve or reject an event"""
+        event = self.get_object()
+        serializer = UniversityEventApprovalSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            action = serializer.validated_data['action']
+            reason = serializer.validated_data.get('reason', '')
+            
+            try:
+                if action == 'approve':
+                    event.approve(request.user)
+                    return Response({
+                        'message': 'Event approved successfully.',
+                        'status': event.status
+                    }, status=status.HTTP_200_OK)
+                elif action == 'reject':
+                    event.reject(request.user, reason)
+                    return Response({
+                        'message': 'Event rejected successfully.',
+                        'status': event.status,
+                        'rejection_reason': reason
+                    }, status=status.HTTP_200_OK)
+            except ValidationError as e:
+                return Response({
+                    'error': str(e)
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def update_status(self, request, pk=None):
+        """Update event status based on current time"""
+        event = self.get_object()
+        
+        try:
+            event.update_status()
+            return Response({
+                'message': 'Event status updated successfully.',
+                'status': event.status
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
+    def invitees(self, request, pk=None):
+        """Get list of invitees for the event"""
+        event = self.get_object()
+        invitees = event.get_invitees()
+        return Response(invitees, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def manage_invitees(self, request, pk=None):
+        """Add or remove invitees from the event"""
+        event = self.get_object()
+        serializer = UniversityEventInviteeSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            email = serializer.validated_data['email']
+            action = serializer.validated_data['action']
+            
+            if action == 'add':
+                event.add_invitee(email)
+                return Response({
+                    'message': f'Email {email} added to invitees successfully.',
+                    'invitees': event.invitees
+                }, status=status.HTTP_200_OK)
+            elif action == 'remove':
+                event.remove_invitee(email)
+                return Response({
+                    'message': f'Email {email} removed from invitees successfully.',
+                    'invitees': event.invitees
+                }, status=status.HTTP_200_OK)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
+    def integration_status(self, request, pk=None):
+        """Get integration status for the event"""
+        event = self.get_object()
+        return Response({
+            'integration_status': event.integration_status,
+            'outlook_calendar_id': event.outlook_calendar_id,
+            'outlook_calendar_url': event.outlook_calendar_url,
+            'notion_page_id': event.notion_page_id,
+            'notion_page_url': event.notion_page_url,
+            'integration_notes': event.integration_notes
+        }, status=status.HTTP_200_OK)
+
+

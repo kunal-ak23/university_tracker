@@ -4,7 +4,11 @@ from django.core.exceptions import ValidationError
 from datetime import date, timedelta
 from django.core.mail import send_mail
 from django.conf import settings
-from .models import PaymentSchedule, PaymentReminder, PaymentScheduleRecipient
+from django.utils import timezone
+from .models import PaymentSchedule, PaymentReminder, PaymentScheduleRecipient, UniversityEvent
+import logging
+
+logger = logging.getLogger('django')
 
 class ContractService:
     @staticmethod
@@ -99,3 +103,144 @@ class PaymentScheduleService:
                 reminder.status = 'failed'
                 reminder.error_message = str(e)
                 reminder.save()
+
+class EventIntegrationService:
+    """Service for handling event integrations with Outlook and Notion"""
+    
+    @staticmethod
+    def trigger_event_integrations(event):
+        """Trigger integrations for an approved event"""
+        if not event.is_approved():
+            logger.warning(f"Event {event.id} is not approved, skipping integrations")
+            return
+        
+        try:
+            # Create Outlook calendar event
+            EventIntegrationService.create_outlook_event(event)
+            
+            # Create Notion page
+            EventIntegrationService.create_notion_page(event)
+            
+        except Exception as e:
+            logger.error(f"Failed to trigger integrations for event {event.id}: {str(e)}")
+            event.mark_integration_failed(str(e))
+    
+    @staticmethod
+    def create_outlook_event(event):
+        """Create Outlook calendar event for the university event"""
+        try:
+            # This is a placeholder for actual Outlook API integration
+            # You would implement the actual Microsoft Graph API calls here
+            
+            # Example implementation structure:
+            # from msgraph.core import GraphClient
+            # from azure.identity import ClientSecretCredential
+            
+            # credential = ClientSecretCredential(
+            #     tenant_id=settings.OUTLOOK_TENANT_ID,
+            #     client_id=settings.OUTLOOK_CLIENT_ID,
+            #     client_secret=settings.OUTLOOK_CLIENT_SECRET
+            # )
+            # 
+            # graph_client = GraphClient(credential=credential)
+            
+            # calendar_event = {
+            #     "subject": event.title,
+            #     "body": {
+            #         "contentType": "HTML",
+            #         "content": event.description
+            #     },
+            #     "start": {
+            #         "dateTime": event.start_datetime.isoformat(),
+            #         "timeZone": "UTC"
+            #     },
+            #     "end": {
+            #         "dateTime": event.end_datetime.isoformat(),
+            #         "timeZone": "UTC"
+            #     },
+            #     "location": {
+            #         "displayName": event.location
+            #     },
+            #     "attendees": [
+            #         {"emailAddress": {"address": invitee["email"]}, "type": "required"}
+            #         for invitee in event.get_invitees()
+            #     ]
+            # }
+            # 
+            # response = graph_client.post("/me/events", json=calendar_event)
+            # calendar_id = response.json()["id"]
+            # calendar_url = response.json()["webLink"]
+            
+            # For now, we'll simulate the integration
+            calendar_id = f"outlook_event_{event.id}_{int(timezone.now().timestamp())}"
+            calendar_url = f"https://outlook.office.com/calendar/event/{calendar_id}"
+            
+            event.mark_outlook_created(calendar_id, calendar_url)
+            logger.info(f"Outlook calendar event created for event {event.id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to create Outlook event for event {event.id}: {str(e)}")
+            raise
+    
+    @staticmethod
+    def create_notion_page(event):
+        """Create Notion page for the university event"""
+        try:
+            # This is a placeholder for actual Notion API integration
+            # You would implement the actual Notion API calls here
+            
+            # Example implementation structure:
+            # import requests
+            # 
+            # headers = {
+            #     "Authorization": f"Bearer {settings.NOTION_API_KEY}",
+            #     "Content-Type": "application/json",
+            #     "Notion-Version": "2022-06-28"
+            # }
+            # 
+            # page_data = {
+            #     "parent": {"database_id": settings.NOTION_EVENTS_DATABASE_ID},
+            #     "properties": {
+            #         "Title": {"title": [{"text": {"content": event.title}}]},
+            #         "University": {"rich_text": [{"text": {"content": event.university.name}}]},
+            #         "Start Date": {"date": {"start": event.start_datetime.isoformat()}},
+            #         "End Date": {"date": {"start": event.end_datetime.isoformat()}},
+            #         "Location": {"rich_text": [{"text": {"content": event.location}}]},
+            #         "Status": {"select": {"name": event.status}},
+            #         "Batch": {"rich_text": [{"text": {"content": event.batch.name if event.batch else "N/A"}}]}
+            #     },
+            #     "children": [
+            #         {
+            #             "object": "block",
+            #             "type": "paragraph",
+            #             "paragraph": {
+            #                 "rich_text": [{"text": {"content": event.description}}]
+            #             }
+            #         }
+            #     ]
+            # }
+            # 
+            # response = requests.post(
+            #     "https://api.notion.com/v1/pages",
+            #     headers=headers,
+            #     json=page_data
+            # )
+            # 
+            # page_id = response.json()["id"]
+            # page_url = response.json()["url"]
+            
+            # For now, we'll simulate the integration
+            page_id = f"notion_page_{event.id}_{int(timezone.now().timestamp())}"
+            page_url = f"https://notion.so/{page_id}"
+            
+            event.mark_notion_created(page_id, page_url)
+            logger.info(f"Notion page created for event {event.id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to create Notion page for event {event.id}: {str(e)}")
+            raise
+
+
+def trigger_event_integrations(event):
+    """Global function to trigger event integrations"""
+    EventIntegrationService.trigger_event_integrations(event)

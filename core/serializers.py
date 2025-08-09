@@ -13,7 +13,8 @@ from .models import (
     OEM, Program, CustomUser, University, Contract, ContractProgram, Batch,
     Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice,
     PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient,
-    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch
+    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
+    UniversityEvent
 )
 
 # Base serializers for models without dependencies
@@ -482,3 +483,131 @@ class ProgramBatchSerializer(serializers.ModelSerializer):
             'status', 'notes', 'created_at', 'updated_at'
         ]
         read_only_fields = ('created_at', 'updated_at')
+
+
+
+
+class UniversityEventSerializer(serializers.ModelSerializer):
+    """Serializer for university events"""
+    
+    university_details = UniversitySerializer(source='university', read_only=True)
+    batch_details = BatchSerializer(source='batch', read_only=True)
+    created_by_details = UserSerializer(source='created_by', read_only=True)
+    approved_by_details = UserSerializer(source='approved_by', read_only=True)
+    invitees_list = serializers.SerializerMethodField()
+    invitee_emails = serializers.SerializerMethodField()
+    can_be_approved = serializers.SerializerMethodField()
+    can_be_rejected = serializers.SerializerMethodField()
+    can_be_submitted = serializers.SerializerMethodField()
+    is_approved = serializers.SerializerMethodField()
+    is_pending_approval = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = UniversityEvent
+        fields = [
+            'id', 'university', 'university_details', 'title', 'description',
+            'start_datetime', 'end_datetime', 'location', 'batch', 'batch_details',
+            'status', 'created_by', 'created_by_details', 'notes', 'invitees',
+            'submitted_for_approval_at', 'approved_by', 'approved_by_details',
+            'approved_at', 'rejection_reason', 'outlook_calendar_id',
+            'outlook_calendar_url', 'notion_page_id', 'notion_page_url',
+            'integration_status', 'integration_notes', 'invitees_list', 'invitee_emails',
+            'can_be_approved', 'can_be_rejected', 'can_be_submitted',
+            'is_approved', 'is_pending_approval', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'created_at', 'updated_at', 'submitted_for_approval_at',
+            'approved_by', 'approved_at', 'outlook_calendar_id',
+            'outlook_calendar_url', 'notion_page_id', 'notion_page_url',
+            'integration_status', 'integration_notes'
+        ]
+
+    def get_invitees_list(self, obj):
+        """Get list of invitees for the event"""
+        return obj.get_invitees()
+
+    def get_invitee_emails(self, obj):
+        """Get list of email addresses for the event"""
+        return obj.get_invitee_emails()
+
+    def get_can_be_approved(self, obj):
+        """Check if event can be approved"""
+        return obj.can_be_approved()
+
+    def get_can_be_rejected(self, obj):
+        """Check if event can be rejected"""
+        return obj.can_be_rejected()
+
+    def get_can_be_submitted(self, obj):
+        """Check if event can be submitted for approval"""
+        return obj.can_be_submitted()
+
+    def get_is_approved(self, obj):
+        """Check if event is approved"""
+        return obj.is_approved()
+
+    def get_is_pending_approval(self, obj):
+        """Check if event is pending approval"""
+        return obj.is_pending_approval()
+
+    def validate(self, data):
+        """Validate event data"""
+        if 'start_datetime' in data and 'end_datetime' in data:
+            if data['start_datetime'] >= data['end_datetime']:
+                raise serializers.ValidationError("End datetime must be after start datetime.")
+        
+        if 'batch' in data and data['batch']:
+            if 'university' in data and data['university']:
+                if data['batch'].contract.university != data['university']:
+                    raise serializers.ValidationError("The selected batch must belong to this university.")
+        
+        return data
+
+    def create(self, validated_data):
+        """Create event with current user as creator"""
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['created_by'] = request.user
+        return super().create(validated_data)
+
+
+class UniversityEventApprovalSerializer(serializers.Serializer):
+    """Serializer for event approval/rejection actions"""
+    
+    action = serializers.ChoiceField(choices=['approve', 'reject'])
+    reason = serializers.CharField(required=False, allow_blank=True)
+    
+    def validate(self, data):
+        if data['action'] == 'reject' and not data.get('reason'):
+            raise serializers.ValidationError("Rejection reason is required when rejecting an event.")
+        return data
+
+
+class UniversityEventSubmissionSerializer(serializers.Serializer):
+    """Serializer for submitting event for approval"""
+    
+    def validate(self, data):
+        event = self.context.get('event')
+        if not event:
+            raise serializers.ValidationError("Event context is required.")
+        
+        if not event.can_be_submitted():
+            raise serializers.ValidationError("Event cannot be submitted for approval.")
+        
+        return data
+
+
+class UniversityEventInviteeSerializer(serializers.Serializer):
+    """Serializer for managing event invitees"""
+    
+    email = serializers.EmailField()
+    action = serializers.ChoiceField(choices=['add', 'remove'])
+    
+    def validate_email(self, value):
+        """Validate email format"""
+        from django.core.validators import validate_email
+        try:
+            validate_email(value)
+        except:
+            raise serializers.ValidationError("Invalid email format.")
+        return value
