@@ -126,61 +126,91 @@ class EventIntegrationService:
             event.mark_integration_failed(str(e))
     
     @staticmethod
-    def create_outlook_event(event):
-        """Create Outlook calendar event for the university event"""
+    def create_outlook_event(event, request=None):
+        """Create Outlook calendar event for the university event using Microsoft Graph API"""
         try:
-            # This is a placeholder for actual Outlook API integration
-            # You would implement the actual Microsoft Graph API calls here
+            from django.conf import settings
+            import requests
             
-            # Example implementation structure:
-            # from msgraph.core import GraphClient
-            # from azure.identity import ClientSecretCredential
+            # Check if Microsoft Graph is configured
+            if not all([settings.GRAPH_CLIENT_ID, settings.GRAPH_CLIENT_SECRET, settings.GRAPH_TENANT, settings.GRAPH_GROUP_ID]):
+                logger.warning("Microsoft Graph not configured, skipping Outlook integration")
+                return False
             
-            # credential = ClientSecretCredential(
-            #     tenant_id=settings.OUTLOOK_TENANT_ID,
-            #     client_id=settings.OUTLOOK_CLIENT_ID,
-            #     client_secret=settings.OUTLOOK_CLIENT_SECRET
-            # )
-            # 
-            # graph_client = GraphClient(credential=credential)
+            # Get access token from session
+            access_token = EventIntegrationService._get_graph_access_token(request)
             
-            # calendar_event = {
-            #     "subject": event.title,
-            #     "body": {
-            #         "contentType": "HTML",
-            #         "content": event.description
-            #     },
-            #     "start": {
-            #         "dateTime": event.start_datetime.isoformat(),
-            #         "timeZone": "UTC"
-            #     },
-            #     "end": {
-            #         "dateTime": event.end_datetime.isoformat(),
-            #         "timeZone": "UTC"
-            #     },
-            #     "location": {
-            #         "displayName": event.location
-            #     },
-            #     "attendees": [
-            #         {"emailAddress": {"address": invitee["email"]}, "type": "required"}
-            #         for invitee in event.get_invitees()
-            #     ]
-            # }
-            # 
-            # response = graph_client.post("/me/events", json=calendar_event)
-            # calendar_id = response.json()["id"]
-            # calendar_url = response.json()["webLink"]
+            if not access_token:
+                logger.warning("No access token available for Microsoft Graph")
+                return False
             
-            # For now, we'll simulate the integration
-            calendar_id = f"outlook_event_{event.id}_{int(timezone.now().timestamp())}"
-            calendar_url = f"https://outlook.office.com/calendar/event/{calendar_id}"
+            # Prepare the event payload
+            payload = {
+                "subject": event.title,
+                "body": {
+                    "contentType": "HTML",
+                    "content": event.description
+                },
+                "start": {
+                    "dateTime": event.start_datetime.isoformat(),
+                    "timeZone": "India Standard Time"
+                },
+                "end": {
+                    "dateTime": event.end_datetime.isoformat(),
+                    "timeZone": "India Standard Time"
+                },
+                "location": {
+                    "displayName": event.location
+                }
+            }
             
-            event.mark_outlook_created(calendar_id, calendar_url)
-            logger.info(f"Outlook calendar event created for event {event.id}")
+            # Add attendees if the event has invitees
+            invitee_emails = event.get_invitee_emails()
+            if invitee_emails:
+                payload["attendees"] = [
+                    {
+                        "emailAddress": {"address": email.strip()},
+                        "type": "required"
+                    } for email in invitee_emails if email.strip()
+                ]
+            
+            # Make the API call to Microsoft Graph
+            response = requests.post(
+                f"https://graph.microsoft.com/v1.0/groups/{settings.GRAPH_GROUP_ID}/events",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json"
+                },
+                json=payload,
+                timeout=20
+            )
+            
+            if response.status_code == 201:
+                event_result = response.json()
+                calendar_id = event_result.get("id")
+                calendar_url = event_result.get("webLink")
+                
+                event.mark_outlook_created(calendar_id, calendar_url)
+                logger.info(f"Outlook calendar event created for event {event.id}: {calendar_id}")
+                return True
+            else:
+                logger.error(f"Failed to create Outlook event: {response.status_code} - {response.text}")
+                return False
             
         except Exception as e:
             logger.error(f"Failed to create Outlook event for event {event.id}: {str(e)}")
-            raise
+            return False
+    
+    @staticmethod
+    def _get_graph_access_token(request=None):
+        """Get access token for Microsoft Graph API"""
+        # For session-based authentication, we need the request object
+        if request:
+            return request.session.get("access_token")
+        
+        # For background tasks, you might want to implement service account auth
+        # or store tokens in a secure cache/database
+        return None
     
     @staticmethod
     def create_notion_page(event):
@@ -241,6 +271,6 @@ class EventIntegrationService:
             raise
 
 
-def trigger_event_integrations(event):
+def trigger_event_integrations(event, request=None):
     """Global function to trigger event integrations"""
-    EventIntegrationService.trigger_event_integrations(event)
+    EventIntegrationService.trigger_event_integrations(event, request)

@@ -54,6 +54,8 @@ def handle_event_approval(sender, instance, created, **kwargs):
             return
             
         # Trigger integration tasks when event is approved
+        # Note: For automatic triggers, we don't have a request object, so we'll skip Outlook integration
+        # Users can manually trigger it after authentication
         from .services import trigger_event_integrations
         try:
             trigger_event_integrations(instance)
@@ -384,6 +386,19 @@ class UniversityEvent(BaseModel):
     def is_pending_approval(self):
         """Check if event is pending approval"""
         return self.status == 'pending_approval'
+    
+    def trigger_outlook_integration(self, request=None):
+        """Manually trigger Outlook integration for this event"""
+        from .services import EventIntegrationService
+        try:
+            success = EventIntegrationService.create_outlook_event(self, request)
+            if not success:
+                self.mark_integration_failed("Outlook integration failed: No access token or API error")
+            return success
+        except Exception as e:
+            logger.error(f"Failed to trigger Outlook integration for event {self.id}: {str(e)}")
+            self.mark_integration_failed(f"Outlook integration failed: {str(e)}")
+            return False
 
 
 

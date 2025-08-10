@@ -19,6 +19,14 @@ from django.utils import timezone
 from django.db.models import Sum, Count, Q
 from django.db.models.functions import TruncMonth
 from django.contrib.auth import get_user_model
+from django.shortcuts import redirect
+from django.conf import settings
+from django.http import JsonResponse, HttpResponse
+from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
+import msal
+import requests
+import logging
 
 logger = get_logger()
 
@@ -1037,5 +1045,379 @@ class UniversityEventViewSet(viewsets.ModelViewSet):
             'notion_page_url': event.notion_page_url,
             'integration_notes': event.integration_notes
         }, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=['post'])
+    def trigger_outlook_integration(self, request, pk=None):
+        """Manually trigger Outlook integration for an event"""
+        event = self.get_object()
+        
+        if not event.is_approved():
+            return Response(
+                {"error": "Event must be approved before triggering Outlook integration"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if user is authenticated with Microsoft Graph
+        access_token = request.session.get("access_token")
+        if not access_token:
+            return Response(
+                {"error": "Not authenticated with Microsoft Graph. Please complete the OAuth flow first."}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            success = event.trigger_outlook_integration(request)
+            if success:
+                return Response({
+                    "message": "Outlook integration triggered successfully",
+                    "outlook_calendar_id": event.outlook_calendar_id,
+                    "outlook_calendar_url": event.outlook_calendar_url,
+                })
+            else:
+                return Response(
+                    {"error": "Failed to trigger Outlook integration. Check logs for details."}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to trigger Outlook integration: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class MicrosoftGraphAuthViewSet(viewsets.ViewSet):
+    """ViewSet for Microsoft Graph authentication and event creation"""
+    
+    def get_permissions(self):
+        """Set permissions based on action"""
+        if self.action in ['login', 'callback', 'create_event_form']:
+            # No authentication required for auth flow
+            permission_classes = []
+        else:
+            # Authentication required for other actions
+            permission_classes = [IsAuthenticatedWithRoleBasedAccess]
+        return [permission() for permission in permission_classes]
+    
+    def _build_msal_app(self):
+        """Build MSAL application instance"""
+        return msal.ConfidentialClientApplication(
+            settings.GRAPH_CLIENT_ID,
+            authority=settings.GRAPH_AUTHORITY,
+            client_credential=settings.GRAPH_CLIENT_SECRET
+        )
+    
+    @action(detail=False, methods=['get'])
+    def login(self, request):
+        """Initiate Microsoft Graph OAuth2 login flow"""
+        # Check configuration
+        missing_config = []
+        if not settings.GRAPH_CLIENT_ID:
+            missing_config.append("GRAPH_CLIENT_ID")
+        if not settings.GRAPH_CLIENT_SECRET:
+            missing_config.append("GRAPH_CLIENT_SECRET")
+        if not settings.GRAPH_TENANT:
+            missing_config.append("GRAPH_TENANT")
+        
+        if missing_config:
+            error_msg = f"Microsoft Graph configuration incomplete. Missing: {', '.join(missing_config)}"
+            logger.error(error_msg)
+            return Response(
+                {"error": error_msg}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        try:
+            flow = self._build_msal_app().initiate_auth_code_flow(
+                scopes=settings.GRAPH_SCOPES,
+                redirect_uri=request.build_absolute_uri("/api/auth/outlook/callback")
+            )
+            request.session["auth_flow"] = flow
+            logger.info("Auth flow initiated successfully")
+            return redirect(flow["auth_uri"])
+        except Exception as e:
+            logger.error(f"Failed to initiate auth flow: {str(e)}")
+            return Response(
+                {"error": f"Failed to initiate authentication: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def callback(self, request):
+        """Handle Microsoft Graph OAuth2 callback"""
+        try:
+            flow = request.session.pop("auth_flow", {})
+            if not flow:
+                return Response(
+                    {"error": "No auth flow found in session"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            result = self._build_msal_app().acquire_token_by_auth_code_flow(
+                flow, request.GET.dict()
+            )
+            
+            if "error" in result:
+                return Response(
+                    {"error": result.get("error_description", "Authentication failed")}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            request.session["access_token"] = result["access_token"]
+            request.session["graph_user"] = result.get("id_token_claims", {})
+            
+            return redirect("/api/university-events/")  # Redirect to events page
+            
+        except Exception as e:
+            logger.error(f"Auth callback failed: {str(e)}")
+            return Response(
+                {"error": "Authentication callback failed"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['post'])
+    def create_group_event(self, request):
+        """Create an event in the M365 Group calendar"""
+        token = request.session.get("access_token")
+        if not token:
+            return Response(
+                {"error": "No access token found. Please authenticate first."}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        if not settings.GRAPH_GROUP_ID:
+            return Response(
+                {"error": "Group ID not configured"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        try:
+            # Extract event data from request - support both POST data and JSON
+            if request.content_type == 'application/json':
+                event_data = request.data
+            else:
+                event_data = request.POST
+            
+            # Prepare the payload for Microsoft Graph
+            payload = {
+                "subject": event_data.get("title"),
+                "body": {
+                    "contentType": "HTML", 
+                    "content": event_data.get("description", "")
+                },
+                "start": {
+                    "dateTime": event_data.get("start_iso") or event_data.get("start_datetime"),
+                    "timeZone": "India Standard Time"
+                },
+                "end": {
+                    "dateTime": event_data.get("end_iso") or event_data.get("end_datetime"),
+                    "timeZone": "India Standard Time"
+                },
+                "location": {
+                    "displayName": event_data.get("location", "")
+                }
+            }
+            
+            # Add Teams meeting if requested
+            if event_data.get("is_teams_meeting", False):
+                payload["isOnlineMeeting"] = True
+                payload["onlineMeetingProvider"] = "teamsForBusiness"
+            
+            # Add attendees if provided
+            attendees_csv = event_data.get("attendees_csv", "")
+            if attendees_csv:
+                payload["attendees"] = [
+                    {
+                        "emailAddress": {"address": e.strip()},
+                        "type": "required"
+                    } for e in attendees_csv.split(",") if e.strip()
+                ]
+            
+            # Make the API call to Microsoft Graph
+            response = requests.post(
+                f"https://graph.microsoft.com/v1.0/groups/{settings.GRAPH_GROUP_ID}/events",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                },
+                json=payload,
+                timeout=20
+            )
+            
+            return Response(response.json(), status=response.status_code)
+                
+        except Exception as e:
+            logger.error(f"Failed to create group event: {str(e)}")
+            return Response(
+                {"error": f"Failed to create event: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get', 'post'])
+    def create_event_form(self, request):
+        """Simple form for creating events (for testing)"""
+        if request.method == 'GET':
+            # Return a simple HTML form
+            html = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Create M365 Group Event</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 40px; }
+                    .form-group { margin-bottom: 15px; }
+                    label { display: block; margin-bottom: 5px; font-weight: bold; }
+                    input, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+                    button { background: #0078d4; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }
+                    button:hover { background: #106ebe; }
+                </style>
+            </head>
+            <body>
+                <h1>Create M365 Group Event</h1>
+                <form method="POST">
+                    <div class="form-group">
+                        <label for="title">Title:</label>
+                        <input type="text" id="title" name="title" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="description">Description:</label>
+                        <textarea id="description" name="description" rows="4"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="start_iso">Start Date/Time (ISO):</label>
+                        <input type="datetime-local" id="start_iso" name="start_iso" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="end_iso">End Date/Time (ISO):</label>
+                        <input type="datetime-local" id="end_iso" name="end_iso" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="location">Location:</label>
+                        <input type="text" id="location" name="location">
+                    </div>
+                    <div class="form-group">
+                        <label for="attendees_csv">Attendees (comma-separated emails):</label>
+                        <input type="text" id="attendees_csv" name="attendees_csv" placeholder="user1@example.com,user2@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="is_teams_meeting" value="true">
+                            Make it a Teams meeting
+                        </label>
+                    </div>
+                    <button type="submit">Create Event</button>
+                </form>
+                <script>
+                    // Set default times
+                    const now = new Date();
+                    const startTime = new Date(now.getTime() + 60*60*1000); // 1 hour from now
+                    const endTime = new Date(now.getTime() + 2*60*60*1000); // 2 hours from now
+                    
+                    document.getElementById('start_iso').value = startTime.toISOString().slice(0, 16);
+                    document.getElementById('end_iso').value = endTime.toISOString().slice(0, 16);
+                </script>
+            </body>
+            </html>
+            """
+            return HttpResponse(html)
+        
+        # Handle POST request
+        return self.create_group_event(request)
+    
+    @action(detail=False, methods=['get'])
+    def status(self, request):
+        """Check authentication status"""
+        token = request.session.get("access_token")
+        user = request.session.get("graph_user", {})
+        
+        # Check configuration
+        config_status = {
+            "client_id": bool(settings.GRAPH_CLIENT_ID),
+            "client_secret": bool(settings.GRAPH_CLIENT_SECRET),
+            "tenant": bool(settings.GRAPH_TENANT),
+            "group_id": bool(settings.GRAPH_GROUP_ID),
+            "authority": bool(settings.GRAPH_AUTHORITY),
+            "scopes": bool(settings.GRAPH_SCOPES)
+        }
+        
+        return Response({
+            "authenticated": bool(token),
+            "user": user,
+            "group_id": settings.GRAPH_GROUP_ID,
+            "configuration": config_status,
+            "configured": all(config_status.values())
+        })
+    
+    @action(detail=False, methods=['post'])
+    def test_integration(self, request):
+        """Test the complete integration flow with a sample event"""
+        # Check authentication
+        access_token = request.session.get("access_token")
+        if not access_token:
+            return Response(
+                {"error": "Not authenticated with Microsoft Graph. Please complete the OAuth flow first."}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            from datetime import datetime, timedelta
+            from .models import UniversityEvent, University, CustomUser
+            
+            # Create a test university event
+            university, _ = University.objects.get_or_create(
+                name="Test University for Integration",
+                defaults={
+                    'website': 'https://testuniversity.edu',
+                    'established_year': 2020,
+                    'accreditation': 'Test Accreditation'
+                }
+            )
+            
+            user, _ = CustomUser.objects.get_or_create(
+                username='integration_test_user',
+                defaults={
+                    'email': 'integration@test.com',
+                    'first_name': 'Integration',
+                    'last_name': 'Test',
+                    'role': 'university_poc'
+                }
+            )
+            
+            # Create test event
+            start_time = datetime.now() + timedelta(hours=1)
+            end_time = start_time + timedelta(hours=2)
+            
+            event = UniversityEvent.objects.create(
+                university=university,
+                title="Integration Test Event",
+                description="This is a test event for Microsoft Graph integration",
+                start_datetime=start_time,
+                end_datetime=end_time,
+                location="Virtual Test Room",
+                created_by=user,
+                status='approved',
+                invitees="test1@example.com,test2@example.com"
+            )
+            
+            # Trigger Outlook integration
+            success = event.trigger_outlook_integration(request)
+            
+            if success:
+                return Response({
+                    "message": "Integration test successful!",
+                    "event_id": event.id,
+                    "outlook_calendar_id": event.outlook_calendar_id,
+                    "outlook_calendar_url": event.outlook_calendar_url,
+                })
+            else:
+                return Response(
+                    {"error": "Integration test failed. Check logs for details."}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+                
+        except Exception as e:
+            logger.error(f"Integration test failed: {str(e)}")
+            return Response(
+                {"error": f"Integration test failed: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 

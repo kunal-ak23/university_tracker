@@ -260,3 +260,12 @@ CORS_ALLOW_METHODS = [
     'POST',
     'PUT',
 ]
+
+# Microsoft Graph Configuration
+GRAPH_CLIENT_ID = os.getenv('GRAPH_CLIENT_ID')
+GRAPH_CLIENT_SECRET = os.getenv('GRAPH_CLIENT_SECRET')
+GRAPH_TENANT = os.getenv('GRAPH_TENANT')
+GRAPH_AUTHORITY = f"https://login.microsoftonline.com/{GRAPH_TENANT}" if GRAPH_TENANT else None
+GRAPH_SCOPES = ["Group.ReadWrite.All"]  # delegated scope
+GRAPH_GROUP_ID = os.getenv('GRAPH_GROUP_ID')  # Your M365 Group ID
+GRAPH_REDIRECT_URI = os.getenv('GRAPH_REDIRECT_URI', 'http://localhost:8000/api/auth/outlook/callback')

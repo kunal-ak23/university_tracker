@@ -17,6 +17,7 @@ gunicorn==23.0.0
 html5lib==1.1
 idna==3.10
 isodate==0.7.2
+msal==1.28.0
 packaging==24.1
 pillow==10.4.0
 psycopg==3.1.18

@@ -7,7 +7,7 @@ from .views import (
     StreamViewSet, TaxRateViewSet, LoginView, RegisterView, UserViewSet,
     InvoiceViewSet, DashboardViewSet, StudentViewSet, ChannelPartnerViewSet,
     ChannelPartnerProgramViewSet, ChannelPartnerStudentViewSet, ProgramBatchViewSet,
-    UniversityEventViewSet
+    UniversityEventViewSet, MicrosoftGraphAuthViewSet
 )
 
 router = DefaultRouter()
@@ -30,6 +30,7 @@ router.register(r'channel-partner-programs', ChannelPartnerProgramViewSet)
 router.register(r'channel-partner-students', ChannelPartnerStudentViewSet)
 router.register(r'program-batches', ProgramBatchViewSet)
 router.register(r'university-events', UniversityEventViewSet)
+router.register(r'auth/outlook', MicrosoftGraphAuthViewSet, basename='outlook-auth')
 
 urlpatterns = [
     path('', include(router.urls)),
