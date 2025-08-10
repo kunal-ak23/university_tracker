@@ -47,7 +47,12 @@ def log_model_changes(sender, instance, **kwargs):
 @receiver(post_save, sender='core.UniversityEvent')
 def handle_event_approval(sender, instance, created, **kwargs):
     """Handle post-save actions for UniversityEvent"""
+    # Only trigger integrations when status changes to 'approved' and it's not a new creation
     if not created and instance.status == 'approved':
+        # Check if this is an integration update to avoid infinite recursion
+        if hasattr(instance, '_integration_update') and instance._integration_update:
+            return
+            
         # Trigger integration tasks when event is approved
         from .services import trigger_event_integrations
         try:
@@ -334,6 +339,8 @@ class UniversityEvent(BaseModel):
         elif self.integration_status == 'notion_created':
             self.integration_status = 'both_created'
         
+        # Set flag to prevent infinite recursion
+        self._integration_update = True
         self.save(update_fields=['outlook_calendar_id', 'outlook_calendar_url', 'integration_status'])
 
     def mark_notion_created(self, page_id, page_url):
@@ -346,12 +353,16 @@ class UniversityEvent(BaseModel):
         elif self.integration_status == 'outlook_created':
             self.integration_status = 'both_created'
         
+        # Set flag to prevent infinite recursion
+        self._integration_update = True
         self.save(update_fields=['notion_page_id', 'notion_page_url', 'integration_status'])
 
     def mark_integration_failed(self, error_message):
         """Mark integration as failed"""
         self.integration_status = 'failed'
         self.integration_notes = error_message
+        # Set flag to prevent infinite recursion
+        self._integration_update = True
         self.save(update_fields=['integration_status', 'integration_notes'])
 
     def can_be_approved(self):
