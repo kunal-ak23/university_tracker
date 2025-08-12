@@ -509,17 +509,15 @@ class UniversityEventSerializer(serializers.ModelSerializer):
             'start_datetime', 'end_datetime', 'location', 'batch', 'batch_details',
             'status', 'created_by', 'created_by_details', 'notes', 'invitees',
             'submitted_for_approval_at', 'approved_by', 'approved_by_details',
-            'approved_at', 'rejection_reason', 'outlook_calendar_id',
-            'outlook_calendar_url', 'notion_page_id', 'notion_page_url',
-            'integration_status', 'integration_notes', 'invitees_list', 'invitee_emails',
-            'can_be_approved', 'can_be_rejected', 'can_be_submitted',
-            'is_approved', 'is_pending_approval', 'created_at', 'updated_at'
+            'approved_at', 'rejection_reason', 'email_sent_count', 'email_sent_at',
+            'notion_page_id', 'notion_page_url', 'integration_status', 'integration_notes', 
+            'invitees_list', 'invitee_emails', 'can_be_approved', 'can_be_rejected', 
+            'can_be_submitted', 'is_approved', 'is_pending_approval', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'created_at', 'updated_at', 'submitted_for_approval_at',
-            'approved_by', 'approved_at', 'outlook_calendar_id',
-            'outlook_calendar_url', 'notion_page_id', 'notion_page_url',
-            'integration_status', 'integration_notes'
+            'approved_by', 'approved_at', 'email_sent_count', 'email_sent_at',
+            'notion_page_id', 'notion_page_url', 'integration_status', 'integration_notes'
         ]
 
     def get_invitees_list(self, obj):

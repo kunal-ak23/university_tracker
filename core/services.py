@@ -5,8 +5,9 @@ from datetime import date, timedelta
 from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
-from .models import PaymentSchedule, PaymentReminder, PaymentScheduleRecipient, UniversityEvent
+from .models import PaymentSchedule, PaymentReminder, PaymentScheduleRecipient
 import logging
+import requests
 
 logger = logging.getLogger('django')
 
@@ -105,7 +106,7 @@ class PaymentScheduleService:
                 reminder.save()
 
 class EventIntegrationService:
-    """Service for handling event integrations with Outlook and Notion"""
+    """Service for handling event integrations with Microsoft Graph (email) and Notion"""
     
     @staticmethod
     def trigger_event_integrations(event):
@@ -115,8 +116,8 @@ class EventIntegrationService:
             return
         
         try:
-            # Create Outlook calendar event
-            EventIntegrationService.create_outlook_event(event)
+            # Send email notification using Microsoft Graph
+            EventIntegrationService.send_event_email(event)
             
             # Create Notion page
             EventIntegrationService.create_notion_page(event)
@@ -126,57 +127,139 @@ class EventIntegrationService:
             event.mark_integration_failed(str(e))
     
     @staticmethod
-    def create_outlook_event(event, request=None):
-        """Create Outlook calendar event for the university event using Microsoft Graph API"""
+    def send_event_email(event):
+        """Send email notification for the university event using Microsoft Graph API"""
         try:
-            from django.conf import settings
-            import requests
-            
             # Check if Microsoft Graph is configured
-            if not all([settings.GRAPH_CLIENT_ID, settings.GRAPH_CLIENT_SECRET, settings.GRAPH_TENANT, settings.GRAPH_GROUP_ID]):
-                logger.warning("Microsoft Graph not configured, skipping Outlook integration")
+            if not all([settings.GRAPH_CLIENT_ID, settings.GRAPH_CLIENT_SECRET, settings.GRAPH_TENANT, settings.GRAPH_SENDER_ID]):
+                logger.warning("Microsoft Graph not configured (missing GRAPH_* envs), skipping email integration")
                 return False
             
-            # Get access token from session
-            access_token = EventIntegrationService._get_graph_access_token(request)
+            # Get access token using client credentials
+            access_token = EventIntegrationService._get_graph_access_token()
             
             if not access_token:
                 logger.warning("No access token available for Microsoft Graph")
                 return False
+
+            # Get invitee emails
+            invitee_emails = event.get_invitee_emails()
             
-            # Prepare the event payload
-            payload = {
-                "subject": event.title,
-                "body": {
-                    "contentType": "HTML",
-                    "content": event.description
-                },
-                "start": {
-                    "dateTime": event.start_datetime.isoformat(),
-                    "timeZone": "India Standard Time"
-                },
-                "end": {
-                    "dateTime": event.end_datetime.isoformat(),
-                    "timeZone": "India Standard Time"
-                },
-                "location": {
-                    "displayName": event.location
-                }
+            # Prepare email content
+            email_subject = f"Automated Event Invitation: {event.title}"
+            email_body = EventIntegrationService._create_email_body(event)
+            
+            # Send email to teched@datagami.in with invitees in body
+            try:
+                success = EventIntegrationService._send_single_email(
+                    access_token, settings.GRAPH_SENDER_ID, email_subject, email_body
+                )
+                if success:
+                    event.mark_email_sent(len(invitee_emails))
+                    logger.info(f"Email sent to teched@datagami.in for event {event.id} with {len(invitee_emails)} invitees")
+                    return True
+                else:
+                    logger.error(f"Failed to send email to teched@datagami.in for event {event.id}")
+                    return False
+            except Exception as e:
+                logger.error(f"Failed to send email to teched@datagami.in: {str(e)}")
+                return False
+            
+        except Exception as e:
+            logger.error(f"Failed to send event email for event {event.id}: {str(e)}")
+            return False
+    
+    @staticmethod
+    def _get_graph_access_token():
+        """Get access token for Microsoft Graph API using client credentials"""
+        try:
+            token_url = f"https://login.microsoftonline.com/{settings.GRAPH_TENANT}/oauth2/v2.0/token"
+            
+            data = {
+                'client_id': settings.GRAPH_CLIENT_ID,
+                'client_secret': settings.GRAPH_CLIENT_SECRET,
+                'scope': 'https://graph.microsoft.com/.default',
+                'grant_type': 'client_credentials'
             }
             
-            # Add attendees if the event has invitees
-            invitee_emails = event.get_invitee_emails()
-            if invitee_emails:
-                payload["attendees"] = [
-                    {
-                        "emailAddress": {"address": email.strip()},
-                        "type": "required"
-                    } for email in invitee_emails if email.strip()
-                ]
+            response = requests.post(token_url, data=data, timeout=30)
+            
+            if response.status_code == 200:
+                token_data = response.json()
+                return token_data.get('access_token')
+            else:
+                logger.error(f"Failed to acquire token: {response.status_code} - {response.text}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error acquiring access token: {str(e)}")
+            return None
+    
+    @staticmethod
+    def _create_email_body(event):
+        """Create HTML email body for the event with invitees for Power Automate processing"""
+        invitees = event.get_invitees()
+        
+        # Create structured invitee list for Power Automate
+        invitee_emails = [invitee['email'] for invitee in invitees]
+        invitee_list = "\n".join([f"• {invitee['name']} ({invitee['email']}) - {invitee['role']}" for invitee in invitees])
+        
+        html_body = f"""
+        <html>
+        <body>
+            <h2>Event Invitation</h2>
+            <p><strong>Event:</strong> {event.title}</p>
+            <p><strong>Date:</strong> {event.start_datetime.strftime('%A, %B %d, %Y')}</p>
+            <p><strong>Time:</strong> {event.start_datetime.strftime('%I:%M %p')} - {event.end_datetime.strftime('%I:%M %p')}</p>
+            <p><strong>Location:</strong> {event.location}</p>
+            <p><strong>University:</strong> {event.university.name}</p>
+            <p><strong>Description:</strong></p>
+            <p>{event.description}</p>
+            
+            <h3>Invitees for Calendar Invite:</h3>
+            <p><strong>Email List (comma-separated):</strong></p>
+            <p>{', '.join(invitee_emails)}</p>
+            
+            <h3>Detailed Invitee List:</h3>
+            <p>{invitee_list}</p>
+            
+            <hr>
+            <p><em>Power Automate will process this email and create calendar invites for all listed invitees.</em></p>
+            
+            <p>Best regards,<br>
+            {event.university.name}</p>
+        </body>
+        </html>
+        """
+        
+        return html_body
+    
+    @staticmethod
+    def _send_single_email(access_token, recipient_email, subject, html_body):
+        """Send a single email using Microsoft Graph API"""
+        try:
+            # Prepare the email payload
+            payload = {
+                "message": {
+                    "subject": subject,
+                    "body": {
+                        "contentType": "HTML",
+                        "content": html_body
+                    },
+                    "toRecipients": [
+                        {
+                            "emailAddress": {
+                                "address": recipient_email
+                            }
+                        }
+                    ]
+                },
+                "saveToSentItems": "true"
+            }
             
             # Make the API call to Microsoft Graph
             response = requests.post(
-                f"https://graph.microsoft.com/v1.0/groups/{settings.GRAPH_GROUP_ID}/events",
+                f"https://graph.microsoft.com/v1.0/users/{settings.GRAPH_SENDER_ID}/sendMail",
                 headers={
                     "Authorization": f"Bearer {access_token}",
                     "Content-Type": "application/json"
@@ -185,32 +268,15 @@ class EventIntegrationService:
                 timeout=20
             )
             
-            if response.status_code == 201:
-                event_result = response.json()
-                calendar_id = event_result.get("id")
-                calendar_url = event_result.get("webLink")
-                
-                event.mark_outlook_created(calendar_id, calendar_url)
-                logger.info(f"Outlook calendar event created for event {event.id}: {calendar_id}")
+            if response.status_code == 202:  # 202 Accepted is the correct response for sendMail
                 return True
             else:
-                logger.error(f"Failed to create Outlook event: {response.status_code} - {response.text}")
+                logger.error(f"Failed to send email to {recipient_email}: {response.status_code} - {response.text}")
                 return False
-            
+                
         except Exception as e:
-            logger.error(f"Failed to create Outlook event for event {event.id}: {str(e)}")
+            logger.error(f"Exception sending email to {recipient_email}: {str(e)}")
             return False
-    
-    @staticmethod
-    def _get_graph_access_token(request=None):
-        """Get access token for Microsoft Graph API"""
-        # For session-based authentication, we need the request object
-        if request:
-            return request.session.get("access_token")
-        
-        # For background tasks, you might want to implement service account auth
-        # or store tokens in a secure cache/database
-        return None
     
     @staticmethod
     def create_notion_page(event):
@@ -271,6 +337,6 @@ class EventIntegrationService:
             raise
 
 
-def trigger_event_integrations(event, request=None):
+def trigger_event_integrations(event):
     """Global function to trigger event integrations"""
-    EventIntegrationService.trigger_event_integrations(event, request)
+    EventIntegrationService.trigger_event_integrations(event)

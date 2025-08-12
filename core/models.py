@@ -157,15 +157,15 @@ class UniversityEvent(BaseModel):
     rejection_reason = models.TextField(blank=True, null=True)
     
     # Integration tracking fields
-    outlook_calendar_id = models.CharField(max_length=255, blank=True, null=True, help_text="Outlook Calendar Event ID")
-    outlook_calendar_url = models.URLField(blank=True, null=True, help_text="Outlook Calendar Event URL")
+    email_sent_count = models.PositiveIntegerField(default=0, help_text="Number of emails sent")
+    email_sent_at = models.DateTimeField(blank=True, null=True, help_text="When emails were sent")
     notion_page_id = models.CharField(max_length=255, blank=True, null=True, help_text="Notion Page ID")
     notion_page_url = models.URLField(blank=True, null=True, help_text="Notion Page URL")
     integration_status = models.CharField(max_length=20, choices=[
         ('pending', 'Pending'),
-        ('outlook_created', 'Outlook Created'),
+        ('email_sent', 'Email Sent'),
         ('notion_created', 'Notion Created'),
-        ('both_created', 'Both Created'),
+        ('both_completed', 'Both Completed'),
         ('failed', 'Failed'),
     ], default='pending')
     integration_notes = models.TextField(blank=True, null=True, help_text="Notes about integration status")
@@ -331,19 +331,21 @@ class UniversityEvent(BaseModel):
             
             self.save(update_fields=['status'])
 
-    def mark_outlook_created(self, calendar_id, calendar_url):
-        """Mark Outlook calendar event as created"""
-        self.outlook_calendar_id = calendar_id
-        self.outlook_calendar_url = calendar_url
+
+
+    def mark_email_sent(self, email_count):
+        """Mark emails as sent"""
+        self.email_sent_count = email_count
+        self.email_sent_at = timezone.now()
         
         if self.integration_status == 'pending':
-            self.integration_status = 'outlook_created'
+            self.integration_status = 'email_sent'
         elif self.integration_status == 'notion_created':
-            self.integration_status = 'both_created'
+            self.integration_status = 'both_completed'
         
         # Set flag to prevent infinite recursion
         self._integration_update = True
-        self.save(update_fields=['outlook_calendar_id', 'outlook_calendar_url', 'integration_status'])
+        self.save(update_fields=['email_sent_count', 'email_sent_at', 'integration_status'])
 
     def mark_notion_created(self, page_id, page_url):
         """Mark Notion page as created"""
@@ -352,8 +354,8 @@ class UniversityEvent(BaseModel):
         
         if self.integration_status == 'pending':
             self.integration_status = 'notion_created'
-        elif self.integration_status == 'outlook_created':
-            self.integration_status = 'both_created'
+        elif self.integration_status == 'email_sent':
+            self.integration_status = 'both_completed'
         
         # Set flag to prevent infinite recursion
         self._integration_update = True
@@ -387,18 +389,7 @@ class UniversityEvent(BaseModel):
         """Check if event is pending approval"""
         return self.status == 'pending_approval'
     
-    def trigger_outlook_integration(self, request=None):
-        """Manually trigger Outlook integration for this event"""
-        from .services import EventIntegrationService
-        try:
-            success = EventIntegrationService.create_outlook_event(self, request)
-            if not success:
-                self.mark_integration_failed("Outlook integration failed: No access token or API error")
-            return success
-        except Exception as e:
-            logger.error(f"Failed to trigger Outlook integration for event {self.id}: {str(e)}")
-            self.mark_integration_failed(f"Outlook integration failed: {str(e)}")
-            return False
+
 
 
 
@@ -966,3 +957,6 @@ class ChannelPartnerStudent(BaseModel):
             self.student.save()
             
         super().save(*args, **kwargs)
+
+
+

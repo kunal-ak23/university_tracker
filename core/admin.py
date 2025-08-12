@@ -338,7 +338,7 @@ class UniversityEventAdmin(admin.ModelAdmin):
     ]
     readonly_fields = [
         'created_at', 'updated_at', 'version', 'submitted_for_approval_at',
-        'approved_at', 'outlook_calendar_id', 'outlook_calendar_url',
+        'approved_at', 'email_sent_count', 'email_sent_at',
         'notion_page_id', 'notion_page_url', 'integration_notes'
     ]
     fieldsets = (
@@ -352,7 +352,7 @@ class UniversityEventAdmin(admin.ModelAdmin):
             'fields': ('status', 'submitted_for_approval_at', 'approved_by', 'approved_at', 'rejection_reason')
         }),
         ('Integration', {
-            'fields': ('integration_status', 'outlook_calendar_id', 'outlook_calendar_url', 
+            'fields': ('integration_status', 'email_sent_count', 'email_sent_at',
                       'notion_page_id', 'notion_page_url', 'integration_notes'),
             'classes': ('collapse',)
         }),
@@ -420,5 +420,6 @@ class UniversityEventAdmin(admin.ModelAdmin):
         
         if updated_count > 0:
             self.message_user(request, f"Successfully updated status for {updated_count} events.")
+
 
 
