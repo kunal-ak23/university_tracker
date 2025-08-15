@@ -1,4 +1,5 @@
 # core/services.py
+from zoneinfo import ZoneInfo
 
 from django.core.exceptions import ValidationError
 from datetime import date, timedelta
@@ -194,48 +195,54 @@ class EventIntegrationService:
         except Exception as e:
             logger.error(f"Error acquiring access token: {str(e)}")
             return None
+
+    @staticmethod
+    def _create_email_body(event) -> str:
+        """Return a Flow-friendly JSON string for Power Automate Parse JSON."""
+        import json
+
+        # Prefer a flat list of emails for attendees
+        try:
+            invitee_emails = [i["email"] for i in event.get_invitees() if i.get("email")]
+        except Exception:
+            # If you have a helper that already returns emails, use it
+            invitee_emails = getattr(event, "get_invitee_emails", lambda: [])()
+
+        SHIFT = timedelta(hours=5, minutes=30)
+
+        # Minimal fields your Flow will map directly
+        body_for_flow = {
+            "subject": event.title or "",
+            "body": event.description or "",
+            "start": (event.start_datetime - SHIFT).isoformat(),
+            "end":  (event.end_datetime - SHIFT).isoformat(),
+            "location": event.location or "",
+            "attendees": invitee_emails,  # <— array of strings
+            "makeTeamsLink": True,  # toggle as you like
+            "notes": event.notes,
+
+            # Keep the full original details if you need them later
+            "meta": {
+                "event_id": event.id,
+                "university": {"id": event.university.id, "name": event.university.name},
+                "batch": ({"id": event.batch.id, "name": event.batch.name} if event.batch else None),
+                "status": event.status,
+                "invitees": getattr(event, "get_invitees", lambda: [])(),
+                "created_by": (
+                    {"id": event.created_by.id,
+                     "username": event.created_by.username, "email": event.created_by.email}
+                    if getattr(event, "created_by", None) else None
+                ),
+                "created_at": event.created_at.isoformat() if getattr(event, "created_at", None) else None,
+                "integration_status": event.integration_status,
+            }
+        }
+
+        # Compact JSON (no newlines), preserve non-ASCII if any
+        return json.dumps(body_for_flow, separators=(",", ":"), ensure_ascii=False)
     
     @staticmethod
-    def _create_email_body(event):
-        """Create HTML email body for the event with invitees for Power Automate processing"""
-        invitees = event.get_invitees()
-        
-        # Create structured invitee list for Power Automate
-        invitee_emails = [invitee['email'] for invitee in invitees]
-        invitee_list = "\n".join([f"• {invitee['name']} ({invitee['email']}) - {invitee['role']}" for invitee in invitees])
-        
-        html_body = f"""
-        <html>
-        <body>
-            <h2>Event Invitation</h2>
-            <p><strong>Event:</strong> {event.title}</p>
-            <p><strong>Date:</strong> {event.start_datetime.strftime('%A, %B %d, %Y')}</p>
-            <p><strong>Time:</strong> {event.start_datetime.strftime('%I:%M %p')} - {event.end_datetime.strftime('%I:%M %p')}</p>
-            <p><strong>Location:</strong> {event.location}</p>
-            <p><strong>University:</strong> {event.university.name}</p>
-            <p><strong>Description:</strong></p>
-            <p>{event.description}</p>
-            
-            <h3>Invitees for Calendar Invite:</h3>
-            <p><strong>Email List (comma-separated):</strong></p>
-            <p>{', '.join(invitee_emails)}</p>
-            
-            <h3>Detailed Invitee List:</h3>
-            <p>{invitee_list}</p>
-            
-            <hr>
-            <p><em>Power Automate will process this email and create calendar invites for all listed invitees.</em></p>
-            
-            <p>Best regards,<br>
-            {event.university.name}</p>
-        </body>
-        </html>
-        """
-        
-        return html_body
-    
-    @staticmethod
-    def _send_single_email(access_token, recipient_email, subject, html_body):
+    def _send_single_email(access_token, recipient_email, subject, email_body):
         """Send a single email using Microsoft Graph API"""
         try:
             # Prepare the email payload
@@ -243,8 +250,8 @@ class EventIntegrationService:
                 "message": {
                     "subject": subject,
                     "body": {
-                        "contentType": "HTML",
-                        "content": html_body
+                        "contentType": "Text",
+                        "content": email_body
                     },
                     "toRecipients": [
                         {
