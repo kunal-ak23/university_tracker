@@ -47,6 +47,10 @@ class IsAuthenticatedWithRoleBasedAccess(permissions.BasePermission):
             # Agents can create/update leads
             if request.user.is_agent():
                 return True
+            
+            # Staff can create/update events and expenses for assigned universities
+            if request.user.is_staff_user():
+                return True
         
         return False
 
@@ -78,5 +82,12 @@ class IsAuthenticatedWithRoleBasedAccess(permissions.BasePermission):
             if hasattr(obj, 'oem') and hasattr(obj.oem, 'poc'):
                 if obj.oem.poc == request.user:
                     return True
+            
+            # Staff can update objects for their assigned universities
+            if request.user.is_staff_user():
+                if hasattr(obj, 'university'):
+                    assigned_universities = request.user.get_assigned_universities()
+                    if obj.university.id in assigned_universities:
+                        return True
         
         return False

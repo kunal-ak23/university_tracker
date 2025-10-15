@@ -7,7 +7,7 @@ from .views import (
     StreamViewSet, TaxRateViewSet, LoginView, RegisterView, UserViewSet,
     InvoiceViewSet, DashboardViewSet, StudentViewSet, ChannelPartnerViewSet,
     ChannelPartnerProgramViewSet, ChannelPartnerStudentViewSet, ProgramBatchViewSet,
-    UniversityEventViewSet
+    UniversityEventViewSet, ExpenseViewSet, UserManagementViewSet, StaffUniversityAssignmentViewSet
 )
 
 router = DefaultRouter()
@@ -30,6 +30,9 @@ router.register(r'channel-partner-programs', ChannelPartnerProgramViewSet)
 router.register(r'channel-partner-students', ChannelPartnerStudentViewSet)
 router.register(r'program-batches', ProgramBatchViewSet)
 router.register(r'university-events', UniversityEventViewSet)
+router.register(r'expenses', ExpenseViewSet)
+router.register(r'user-management', UserManagementViewSet, basename='user-management')
+router.register(r'staff-assignments', StaffUniversityAssignmentViewSet)
 
 
 urlpatterns = [

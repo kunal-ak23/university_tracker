@@ -162,6 +162,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 AUTH_USER_MODEL = 'core.CustomUser'
 
+# Authentication backends
+AUTHENTICATION_BACKENDS = [
+    'core.auth_backends.EmailBackend',  # Custom backend for email authentication
+    'django.contrib.auth.backends.ModelBackend',  # Default username authentication
+]
 
 LOGGING = {
     'version': 1,

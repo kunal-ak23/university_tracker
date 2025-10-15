@@ -33,7 +33,7 @@ from .models import (
     OEM, Program, University, Stream, Contract, ContractProgram, Batch,
     Billing, Payment, ContractFile, TaxRate, CustomUser, Invoice, ChannelPartner,
     ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
-    UniversityEvent
+    UniversityEvent, Expense, StaffUniversityAssignment
 )
 from .serializers import (
     OEMSerializer, ProgramSerializer, UniversitySerializer, StreamSerializer,
@@ -43,7 +43,8 @@ from .serializers import (
     DashboardInvoiceSerializer, DashboardPaymentSerializer, ChannelPartnerSerializer,
     ChannelPartnerProgramSerializer, ChannelPartnerStudentSerializer, StudentSerializer,
     ProgramBatchSerializer, UniversityEventSerializer, UniversityEventApprovalSerializer,
-    UniversityEventSubmissionSerializer, UniversityEventInviteeSerializer
+    UniversityEventSubmissionSerializer, UniversityEventInviteeSerializer, ExpenseSerializer,
+    StaffUniversityAssignmentSerializer, UserManagementSerializer
 )
 from .permissions import IsAuthenticatedAndReadOnly, IsAuthenticatedWithRoleBasedAccess
 
@@ -100,6 +101,64 @@ class UniversityViewSet(viewsets.ModelViewSet):
     ordering = ['name']
     search_fields = ['name', 'website', 'contact_email', 'contact_phone', 'address', 'accreditation']
 
+    def get_queryset(self):
+        """Filter queryset based on user permissions"""
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # If user is university POC, show only their university
+        if user.is_university_poc():
+            queryset = queryset.filter(poc=user)
+        # If user is staff, show only their assigned universities
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            queryset = queryset.filter(id__in=assigned_universities)
+        # Provider POC and superusers can see all universities
+        
+        return queryset.select_related('poc')
+
+    def update(self, request, *args, **kwargs):
+        """Update university with permission check"""
+        instance = self.get_object()
+        user = request.user
+        
+        # Check if user has permission to edit this university
+        if user.is_university_poc() and instance.poc != user:
+            return Response(
+                {"error": "You can only edit your assigned university"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            if instance.id not in assigned_universities:
+                return Response(
+                    {"error": "You can only edit universities assigned to you"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete university with permission check"""
+        instance = self.get_object()
+        user = request.user
+        
+        # Check if user has permission to delete this university
+        if user.is_university_poc() and instance.poc != user:
+            return Response(
+                {"error": "You can only delete your assigned university"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            if instance.id not in assigned_universities:
+                return Response(
+                    {"error": "You can only delete universities assigned to you"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        return super().destroy(request, *args, **kwargs)
+
 class StreamFilter(filters.FilterSet):
     university = filters.NumberFilter(field_name='university__id')
     
@@ -118,6 +177,22 @@ class StreamViewSet(viewsets.ModelViewSet):
     ordering = ['name']
     search_fields = ['name', 'description', 'university__name']
 
+    def get_queryset(self):
+        """Filter queryset based on user permissions"""
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # If user is university POC, show only streams for their university
+        if user.is_university_poc():
+            queryset = queryset.filter(university__poc=user)
+        # If user is staff, show only streams for their assigned universities
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            queryset = queryset.filter(university__in=assigned_universities)
+        # Provider POC and superusers can see all streams
+        
+        return queryset.select_related('university')
+
 class ContractViewSet(viewsets.ModelViewSet):
     queryset = Contract.objects.all()
     serializer_class = ContractSerializer
@@ -129,6 +204,25 @@ class ContractViewSet(viewsets.ModelViewSet):
     ordering_fields = ['name', 'status', 'start_date', 'end_date', 'created_at', 'updated_at']
     ordering = ['-created_at']  # newest first
     search_fields = ['name', 'status', 'notes', 'oem__name', 'university__name']
+
+    def get_queryset(self):
+        """Filter queryset based on user permissions"""
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # If user is university POC, show only contracts for their university
+        if user.is_university_poc():
+            queryset = queryset.filter(university__poc=user)
+        # If user is provider POC, show only contracts for their OEMs
+        elif user.is_provider_poc():
+            queryset = queryset.filter(oem__poc=user)
+        # If user is staff, show only contracts for their assigned universities
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            queryset = queryset.filter(university__in=assigned_universities)
+        # Superusers can see all contracts
+        
+        return queryset.select_related('university', 'oem')
 
     def create(self, request, *args, **kwargs):
         try:
@@ -306,6 +400,25 @@ class BatchViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
     search_fields = ['name', 'notes', 'contract__name', 'stream__name']
 
+    def get_queryset(self):
+        """Filter queryset based on user permissions"""
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # If user is university POC, show only batches for their university
+        if user.is_university_poc():
+            queryset = queryset.filter(contract__university__poc=user)
+        # If user is provider POC, show only batches for their OEMs
+        elif user.is_provider_poc():
+            queryset = queryset.filter(contract__oem__poc=user)
+        # If user is staff, show only batches for their assigned universities
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            queryset = queryset.filter(contract__university__in=assigned_universities)
+        # Superusers can see all batches
+        
+        return queryset.select_related('contract__university', 'contract__oem', 'stream')
+
 class BillingViewSet(viewsets.ModelViewSet):
     queryset = Billing.objects.all()
     serializer_class = BillingSerializer
@@ -397,8 +510,14 @@ class LoginView(TokenObtainPairView):
     
     def post(self, request, *args, **kwargs):
         try:
+            logger.info(f"Login attempt for: {request.data.get('username', request.data.get('email'))}")
+            
             # First try to authenticate with the provided credentials
             response = super().post(request, *args, **kwargs)
+            
+            logger.info(f"Authentication response status: {response.status_code}")
+            if response.status_code != 200:
+                logger.error(f"Authentication failed: {response.data}")
             
             if response.status_code == 200:
                 # Get user by email or username
@@ -417,13 +536,23 @@ class LoginView(TokenObtainPairView):
                         role = user.role
 
                     # Add user info to response
-                    response.data.update({
-                        'role': role,
-                        'user_id': user.id,
+                    user_data = {
+                        'id': user.id,
                         'email': user.email,
                         'first_name': user.first_name,
                         'last_name': user.last_name,
-                        'full_name': f"{user.first_name} {user.last_name}".strip() or user.email
+                        'username': user.username,
+                        'role': user.role,
+                        'is_superuser': user.is_superuser,
+                        'is_staff': user.is_staff,
+                        'is_active': user.is_active,
+                        'date_joined': user.date_joined,
+                        'last_login': user.last_login,
+                    }
+                    
+                    response.data.update({
+                        'role': role,
+                        'user': user_data
                     })
                     
                 except CustomUser.DoesNotExist:
@@ -742,6 +871,80 @@ class DashboardViewSet(viewsets.ViewSet):
         })
 
     @action(detail=False, methods=['get'])
+    def quarterly_expenses(self, request):
+        """Return quarterly expenses aggregated by university and optionally batch"""
+        year = int(request.query_params.get('year', datetime.now().year))
+        university_id = request.query_params.get('university')
+        batch_id = request.query_params.get('batch')
+
+        expenses = Expense.objects.filter(incurred_date__year=year)
+        if university_id:
+            expenses = expenses.filter(university_id=university_id)
+        if batch_id:
+            expenses = expenses.filter(batch_id=batch_id)
+
+        data = {1: Decimal('0'), 2: Decimal('0'), 3: Decimal('0'), 4: Decimal('0')}
+        for exp in expenses.values('incurred_date', 'amount'):
+            month = exp['incurred_date'].month
+            quarter = (month - 1) // 3 + 1
+            data[quarter] += Decimal(str(exp['amount']))
+
+        return Response({
+            'year': year,
+            'quarters': [
+                {'name': f'Q{q}', 'total': float(total)} for q, total in data.items()
+            ]
+        })
+
+    @action(detail=False, methods=['get'])
+    def profitability(self, request):
+        """Return quarterly profitability: revenue - expenses at university or batch level"""
+        year = int(request.query_params.get('year', datetime.now().year))
+        university_id = request.query_params.get('university')
+        batch_id = request.query_params.get('batch')
+
+        payments = Payment.objects.filter(status='completed', payment_date__year=year)
+        if batch_id:
+            payments = payments.filter(invoice__billing__batches__id=batch_id)
+        elif university_id:
+            payments = payments.filter(invoice__billing__batches__contract__university_id=university_id)
+
+        revenue_by_quarter = {1: Decimal('0'), 2: Decimal('0'), 3: Decimal('0'), 4: Decimal('0')}
+        for p in payments.values('payment_date', 'amount'):
+            month = p['payment_date'].month
+            quarter = (month - 1) // 3 + 1
+            revenue_by_quarter[quarter] += Decimal(str(p['amount']))
+
+        expenses = Expense.objects.filter(incurred_date__year=year)
+        if batch_id:
+            expenses = expenses.filter(batch_id=batch_id)
+        elif university_id:
+            expenses = expenses.filter(university_id=university_id)
+
+        expense_by_quarter = {1: Decimal('0'), 2: Decimal('0'), 3: Decimal('0'), 4: Decimal('0')}
+        for e in expenses.values('incurred_date', 'amount'):
+            month = e['incurred_date'].month
+            quarter = (month - 1) // 3 + 1
+            expense_by_quarter[quarter] += Decimal(str(e['amount']))
+
+        result = []
+        for q in [1,2,3,4]:
+            revenue = revenue_by_quarter[q]
+            expense = expense_by_quarter[q]
+            profit = revenue - expense
+            result.append({
+                'name': f'Q{q}',
+                'revenue': float(revenue),
+                'expenses': float(expense),
+                'profit': float(profit)
+            })
+
+        return Response({
+            'year': year,
+            'quarters': result
+        })
+
+    @action(detail=False, methods=['get'])
     def recent_invoices(self, request):
         """Get recent invoices with pagination"""
         limit = int(request.query_params.get('limit', 5))
@@ -932,10 +1135,56 @@ class UniversityEventViewSet(viewsets.ModelViewSet):
         # If user is provider POC, show events for their OEMs
         elif user.is_provider_poc():
             queryset = queryset.filter(batch__contract__oem__poc=user)
+        # If user is staff, show events for their assigned universities
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            queryset = queryset.filter(university__in=assigned_universities)
         
         return queryset.select_related(
             'university', 'batch', 'created_by', 'approved_by'
         )
+
+    def update(self, request, *args, **kwargs):
+        """Update event with permission check"""
+        instance = self.get_object()
+        user = request.user
+        
+        # Check if user has permission to edit this event
+        if user.is_university_poc() and instance.university.poc != user:
+            return Response(
+                {"error": "You can only edit events for your assigned university"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            if instance.university.id not in assigned_universities:
+                return Response(
+                    {"error": "You can only edit events for universities assigned to you"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete event with permission check"""
+        instance = self.get_object()
+        user = request.user
+        
+        # Check if user has permission to delete this event
+        if user.is_university_poc() and instance.university.poc != user:
+            return Response(
+                {"error": "You can only delete events for your assigned university"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            if instance.university.id not in assigned_universities:
+                return Response(
+                    {"error": "You can only delete events for universities assigned to you"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=['post'])
     def submit_for_approval(self, request, pk=None):
@@ -1046,5 +1295,238 @@ class UniversityEventViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_200_OK)
 
 
+class ExpenseFilter(filters.FilterSet):
+    university = filters.NumberFilter(field_name='university__id')
+    batch = filters.NumberFilter(field_name='batch__id')
+    event = filters.NumberFilter(field_name='event__id')
+    category = filters.CharFilter(field_name='category')
+    start_date = filters.DateFilter(field_name='incurred_date', lookup_expr='gte')
+    end_date = filters.DateFilter(field_name='incurred_date', lookup_expr='lte')
+
+    class Meta:
+        model = Expense
+        fields = ['university', 'batch', 'event', 'category', 'start_date', 'end_date']
+
+
+class ExpenseViewSet(viewsets.ModelViewSet):
+    queryset = Expense.objects.all()
+    serializer_class = ExpenseSerializer
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_class = ExpenseFilter
+    ordering_fields = ['incurred_date', 'amount', 'category', 'created_at']
+    ordering = ['-incurred_date']
+    search_fields = ['description', 'notes', 'event__title', 'batch__name', 'university__name']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        if user.is_university_poc():
+            queryset = queryset.filter(university__poc=user)
+        elif user.is_provider_poc():
+            queryset = queryset.filter(batch__contract__oem__poc=user)
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            queryset = queryset.filter(university__in=assigned_universities)
+        return queryset.select_related('university', 'batch', 'event')
+
+    def update(self, request, *args, **kwargs):
+        """Update expense with permission check"""
+        instance = self.get_object()
+        user = request.user
+        
+        # Check if user has permission to edit this expense
+        if user.is_university_poc() and instance.university.poc != user:
+            return Response(
+                {"error": "You can only edit expenses for your assigned university"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            if instance.university.id not in assigned_universities:
+                return Response(
+                    {"error": "You can only edit expenses for universities assigned to you"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete expense with permission check"""
+        instance = self.get_object()
+        user = request.user
+        
+        # Check if user has permission to delete this expense
+        if user.is_university_poc() and instance.university.poc != user:
+            return Response(
+                {"error": "You can only delete expenses for your assigned university"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        elif user.is_staff_user():
+            assigned_universities = user.get_assigned_universities()
+            if instance.university.id not in assigned_universities:
+                return Response(
+                    {"error": "You can only delete expenses for universities assigned to you"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        return super().destroy(request, *args, **kwargs)
+
+
+class StaffUniversityAssignmentFilter(filters.FilterSet):
+    staff = filters.NumberFilter(field_name='staff__id')
+    university = filters.NumberFilter(field_name='university__id')
+    
+    class Meta:
+        model = StaffUniversityAssignment
+        fields = ['staff', 'university']
+
+
+class StaffUniversityAssignmentViewSet(viewsets.ModelViewSet):
+    queryset = StaffUniversityAssignment.objects.all()
+    serializer_class = StaffUniversityAssignmentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_class = StaffUniversityAssignmentFilter
+    ordering_fields = ['assigned_at', 'staff__username', 'university__name']
+    ordering = ['-assigned_at']
+    search_fields = ['staff__username', 'staff__email', 'university__name']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Only superusers can manage staff assignments
+        if not user.is_superuser:
+            return StaffUniversityAssignment.objects.none()
+        
+        return queryset.select_related('staff', 'university', 'assigned_by')
+
+
+class UserManagementFilter(filters.FilterSet):
+    role = filters.CharFilter(field_name='role')
+    is_active = filters.BooleanFilter(field_name='is_active')
+    is_superuser = filters.BooleanFilter(field_name='is_superuser')
+    
+    class Meta:
+        model = CustomUser
+        fields = ['role', 'is_active', 'is_superuser']
+
+
+class UserManagementViewSet(viewsets.ModelViewSet):
+    queryset = CustomUser.objects.all()
+    serializer_class = UserManagementSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_class = UserManagementFilter
+    ordering_fields = ['username', 'email', 'date_joined', 'last_login']
+    ordering = ['-date_joined']
+    search_fields = ['username', 'email', 'first_name', 'last_name']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Only superusers can manage users
+        if not user.is_superuser:
+            return CustomUser.objects.none()
+        
+        return queryset.prefetch_related('staff_assignments__university')
+
+    def create(self, request, *args, **kwargs):
+        """Create a new user"""
+        if not request.user.is_superuser:
+            return Response(
+                {"error": "Only superusers can create users"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Create user with password
+        password = request.data.get('password')
+        if not password:
+            return Response(
+                {"error": "Password is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        user = CustomUser.objects.create_user(
+            username=serializer.validated_data['username'],
+            email=serializer.validated_data['email'],
+            password=password,
+            first_name=serializer.validated_data.get('first_name', ''),
+            last_name=serializer.validated_data.get('last_name', ''),
+            role=serializer.validated_data.get('role'),
+            phone_number=serializer.validated_data.get('phone_number', ''),
+            address=serializer.validated_data.get('address', ''),
+            date_of_birth=serializer.validated_data.get('date_of_birth'),
+            is_active=serializer.validated_data.get('is_active', True),
+            is_superuser=serializer.validated_data.get('is_superuser', False)
+        )
+        
+        return Response(UserManagementSerializer(user).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def assign_universities(self, request, pk=None):
+        """Assign universities to a staff user"""
+        if not request.user.is_superuser:
+            return Response(
+                {"error": "Only superusers can assign universities"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        user = self.get_object()
+        if not user.is_staff_user():
+            return Response(
+                {"error": "Only staff users can be assigned to universities"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        university_ids = request.data.get('university_ids', [])
+        if not university_ids:
+            return Response(
+                {"error": "university_ids is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Clear existing assignments
+        StaffUniversityAssignment.objects.filter(staff=user).delete()
+        
+        # Create new assignments
+        assignments = []
+        for university_id in university_ids:
+            try:
+                university = University.objects.get(id=university_id)
+                assignment = StaffUniversityAssignment.objects.create(
+                    staff=user,
+                    university=university,
+                    assigned_by=request.user
+                )
+                assignments.append(assignment)
+            except University.DoesNotExist:
+                return Response(
+                    {"error": f"University with id {university_id} not found"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        return Response({
+            "message": f"Successfully assigned {len(assignments)} universities to {user.username}",
+            "assignments": StaffUniversityAssignmentSerializer(assignments, many=True).data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'])
+    def assigned_universities(self, request, pk=None):
+        """Get universities assigned to a staff user"""
+        user = self.get_object()
+        if not user.is_staff_user():
+            return Response({"universities": []})
+        
+        assignments = StaffUniversityAssignment.objects.filter(staff=user)
+        return Response(StaffUniversityAssignmentSerializer(assignments, many=True).data)
 
 

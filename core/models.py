@@ -293,8 +293,8 @@ class UniversityEvent(BaseModel):
         if self.status != 'pending_approval':
             raise ValidationError("Only pending approval events can be approved.")
         
-        if not (approved_by_user.is_university_poc() or approved_by_user.is_superuser):
-            raise ValidationError("Only university POCs or superusers can approve events.")
+        if not approved_by_user.is_superuser:
+            raise ValidationError("Only superusers can approve events.")
         
         self.status = 'approved'
         self.approved_by = approved_by_user
@@ -308,8 +308,8 @@ class UniversityEvent(BaseModel):
         if self.status != 'pending_approval':
             raise ValidationError("Only pending approval events can be rejected.")
         
-        if not (rejected_by_user.is_university_poc() or rejected_by_user.is_superuser):
-            raise ValidationError("Only university POCs or superusers can reject events.")
+        if not rejected_by_user.is_superuser:
+            raise ValidationError("Only superusers can reject events.")
         
         self.status = 'rejected'
         self.rejection_reason = reason
@@ -393,6 +393,49 @@ class UniversityEvent(BaseModel):
 
 
 
+
+class Expense(BaseModel):
+    CATEGORY_CHOICES = [
+        ('marketing', 'Marketing'),
+        ('travel', 'Travel'),
+        ('operations', 'Operations'),
+        ('logistics', 'Logistics'),
+        ('venue', 'Venue'),
+        ('speaker', 'Speaker'),
+        ('other', 'Other'),
+    ]
+
+    university = models.ForeignKey(University, on_delete=models.CASCADE, related_name='expenses')
+    batch = models.ForeignKey('Batch', on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses')
+    event = models.ForeignKey('UniversityEvent', on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses')
+    amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    category = models.CharField(max_length=50, choices=CATEGORY_CHOICES, default='other')
+    incurred_date = models.DateField()
+    description = models.TextField(blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+
+    class Meta:
+        ordering = ['-incurred_date', '-created_at']
+        indexes = [
+            models.Index(fields=['university', 'incurred_date']),
+            models.Index(fields=['batch', 'incurred_date']),
+            models.Index(fields=['event']),
+        ]
+
+    def __str__(self):
+        target = self.event.title if self.event else (self.batch.name if self.batch else self.university.name)
+        return f'Expense {self.category} - ₹{self.amount} - {target} - {self.incurred_date}'
+
+    def clean(self):
+        super().clean()
+        # Ensure relationships are consistent
+        if self.batch and self.batch.contract.university_id != self.university_id:
+            raise ValidationError("The selected batch must belong to this university.")
+        if self.event and self.event.university_id != self.university_id:
+            raise ValidationError("The selected event must belong to this university.")
+        # If both batch and event are set, ensure event references same batch if event has one
+        if self.batch and self.event and self.event.batch and self.event.batch_id != self.batch_id:
+            raise ValidationError("Event's batch does not match the selected batch.")
 
 class Stream(BaseModel):
     DURATION_UNIT_CHOICES = [
@@ -744,6 +787,7 @@ class CustomUser(AbstractUser):
         ('provider_poc', 'Provider POC'),
         ('university_poc', 'University POC'),
         ('agent', 'Agent'),
+        ('staff', 'Staff'),
     ]
 
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, blank=True, null=True)
@@ -764,6 +808,36 @@ class CustomUser(AbstractUser):
 
     def is_agent(self):
         return self.role == 'agent'
+
+    def is_staff_user(self):
+        return self.role == 'staff'
+
+    def get_assigned_universities(self):
+        """Get universities assigned to this staff user"""
+        if self.is_staff_user():
+            return University.objects.filter(staff_assignments__staff=self)
+        return University.objects.none()
+
+
+class StaffUniversityAssignment(BaseModel):
+    """Model to assign staff users to multiple universities"""
+    staff = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='staff_assignments')
+    university = models.ForeignKey(University, on_delete=models.CASCADE, related_name='staff_assignments')
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    assigned_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, related_name='staff_assignments_created')
+
+    class Meta:
+        unique_together = ('staff', 'university')
+        verbose_name = 'Staff University Assignment'
+        verbose_name_plural = 'Staff University Assignments'
+
+    def __str__(self):
+        return f'{self.staff.username} - {self.university.name}'
+
+    def clean(self):
+        if self.staff and not self.staff.is_staff_user():
+            raise ValidationError("Only staff users can be assigned to universities.")
+
 
 class PaymentSchedule(BaseModel):
     FREQUENCY_CHOICES = [

@@ -11,7 +11,8 @@ from django.utils.safestring import mark_safe
 from .logger_service import get_logger
 from .models import Billing, Payment, OEM, Program, University, Stream, TaxRate, Contract, ContractProgram, Batch, \
     Invoice, ContractFile, CustomUser, BatchSnapshot, PaymentDocument, PaymentScheduleRecipient, PaymentSchedule, \
-    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch, UniversityEvent
+    ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch, UniversityEvent, Expense, \
+    StaffUniversityAssignment
 
 
 logger = get_logger()
@@ -422,4 +423,35 @@ class UniversityEventAdmin(admin.ModelAdmin):
             self.message_user(request, f"Successfully updated status for {updated_count} events.")
 
 
+@admin.register(StaffUniversityAssignment)
+class StaffUniversityAssignmentAdmin(admin.ModelAdmin):
+    list_display = ['staff', 'university', 'assigned_at', 'assigned_by']
+    list_filter = ['assigned_at', 'university']
+    search_fields = ['staff__username', 'staff__email', 'university__name']
+    readonly_fields = ['assigned_at']
+    autocomplete_fields = ['staff', 'university', 'assigned_by']
 
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs
+        return qs.none()
+
+
+@admin.register(Expense)
+class ExpenseAdmin(admin.ModelAdmin):
+    list_display = ['id', 'university', 'batch', 'event', 'category', 'amount', 'incurred_date', 'created_at']
+    list_filter = ['category', 'incurred_date', 'university', 'batch']
+    search_fields = ['description', 'notes', 'event__title', 'batch__name', 'university__name']
+    readonly_fields = ['created_at', 'updated_at', 'version']
+    fields = ['university', 'batch', 'event', 'category', 'amount', 'incurred_date', 'description', 'notes', 'created_at', 'updated_at', 'version']
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs
+        if request.user.is_university_poc():
+            return qs.filter(university__poc=request.user)
+        if request.user.is_provider_poc():
+            return qs.filter(batch__contract__oem__poc=request.user)
+        return qs.none()

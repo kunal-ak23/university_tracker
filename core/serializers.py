@@ -14,7 +14,7 @@ from .models import (
     Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice,
     PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient,
     ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
-    UniversityEvent
+    UniversityEvent, Expense, StaffUniversityAssignment
 )
 
 # Base serializers for models without dependencies
@@ -609,3 +609,84 @@ class UniversityEventInviteeSerializer(serializers.Serializer):
         except:
             raise serializers.ValidationError("Invalid email format.")
         return value
+
+
+class ExpenseSerializer(serializers.ModelSerializer):
+    university_details = UniversitySerializer(source='university', read_only=True)
+    batch_details = BatchSerializer(source='batch', read_only=True)
+    event_details = UniversityEventSerializer(source='event', read_only=True)
+
+    class Meta:
+        model = Expense
+        fields = [
+            'id', 'university', 'university_details', 'batch', 'batch_details', 'event', 'event_details',
+            'category', 'amount', 'incurred_date', 'description', 'notes', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def validate(self, data):
+        university = data.get('university') or getattr(self.instance, 'university', None)
+        batch = data.get('batch') if 'batch' in data else getattr(self.instance, 'batch', None)
+        event = data.get('event') if 'event' in data else getattr(self.instance, 'event', None)
+
+        if batch and batch.contract.university_id != university.id:
+            raise serializers.ValidationError("The selected batch must belong to the specified university.")
+        if event and event.university_id != university.id:
+            raise serializers.ValidationError("The selected event must belong to the specified university.")
+        if batch and event and event.batch and event.batch_id != batch.id:
+            raise serializers.ValidationError("Event's batch does not match the selected batch.")
+        # amount is optional and can be null or zero
+        return data
+
+
+class StaffUniversityAssignmentSerializer(serializers.ModelSerializer):
+    staff_details = UserSerializer(source='staff', read_only=True)
+    university_details = UniversitySerializer(source='university', read_only=True)
+    assigned_by_details = UserSerializer(source='assigned_by', read_only=True)
+
+    class Meta:
+        model = StaffUniversityAssignment
+        fields = [
+            'id', 'staff', 'staff_details', 'university', 'university_details',
+            'assigned_at', 'assigned_by', 'assigned_by_details', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['assigned_at', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        # Set assigned_by to the current user
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['assigned_by'] = request.user
+        return super().create(validated_data)
+
+
+class UserManagementSerializer(serializers.ModelSerializer):
+    """Serializer for user management by superusers"""
+    assigned_universities = serializers.SerializerMethodField()
+    full_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CustomUser
+        fields = [
+            'id', 'username', 'email', 'first_name', 'last_name', 'full_name',
+            'role', 'phone_number', 'address', 'date_of_birth', 'is_active',
+            'is_staff', 'is_superuser', 'last_login', 'date_joined',
+            'assigned_universities'
+        ]
+        read_only_fields = ['id', 'last_login', 'date_joined', 'is_staff']
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip() or obj.username
+
+    def get_assigned_universities(self, obj):
+        if obj.is_staff_user():
+            assignments = StaffUniversityAssignment.objects.filter(staff=obj)
+            return StaffUniversityAssignmentSerializer(assignments, many=True).data
+        return []
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Ensure role is never null - default to 'staff' if null
+        if not data.get('role'):
+            data['role'] = 'staff'
+        return data
