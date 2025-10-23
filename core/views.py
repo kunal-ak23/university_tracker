@@ -33,7 +33,7 @@ from .models import (
     OEM, Program, University, Stream, Contract, ContractProgram, Batch,
     Billing, Payment, ContractFile, TaxRate, CustomUser, Invoice, ChannelPartner,
     ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
-    UniversityEvent, Expense, StaffUniversityAssignment
+    UniversityEvent, Expense, StaffUniversityAssignment, ContractStreamPricing
 )
 from .serializers import (
     OEMSerializer, ProgramSerializer, UniversitySerializer, StreamSerializer,
@@ -222,7 +222,7 @@ class ContractViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(university__in=assigned_universities)
         # Superusers can see all contracts
         
-        return queryset.select_related('university', 'oem')
+        return queryset.select_related('university', 'oem').prefetch_related('stream_pricing__stream', 'stream_pricing__tax_rate')
 
     def create(self, request, *args, **kwargs):
         try:
@@ -234,11 +234,10 @@ class ContractViewSet(viewsets.ModelViewSet):
                 'name': request.data.get('name'),
                 'university_id': request.data.get('university'),
                 'oem_id': request.data.get('oem'),
-                'cost_per_student': request.data.get('cost_per_student'),
-                'oem_transfer_price': request.data.get('oem_transfer_price'),
+                'start_year': request.data.get('start_year'),
+                'end_year': request.data.get('end_year'),
                 'start_date': request.data.get('start_date'),
                 'end_date': request.data.get('end_date'),
-                'tax_rate_id': request.data.get('tax_rate'),
                 'status': request.data.get('status', 'active'),
                 'notes': request.data.get('notes'),
             }
@@ -261,7 +260,7 @@ class ContractViewSet(viewsets.ModelViewSet):
             logger.info(f"Processed contract data: {contract_data}")
 
             # Validate required fields
-            required_fields = ['name', 'university_id', 'oem_id', 'cost_per_student', 'tax_rate_id']
+            required_fields = ['name', 'university_id', 'oem_id', 'start_year', 'end_year']
             missing_fields = [field for field in required_fields if field not in contract_data]
             if missing_fields:
                 return Response(
@@ -287,6 +286,43 @@ class ContractViewSet(viewsets.ModelViewSet):
                 )
 
             self.perform_create(serializer)
+
+            # Handle stream pricing data
+            stream_pricing_data = []
+            i = 0
+            while f'stream_pricing[{i}][stream_id]' in request.data:
+                pricing_data = {
+                    'contract': serializer.instance,
+                    'stream_id': request.data.get(f'stream_pricing[{i}][stream_id]'),
+                    'year': request.data.get(f'stream_pricing[{i}][year]'),
+                    'cost_per_student': request.data.get(f'stream_pricing[{i}][cost_per_student]'),
+                    'oem_transfer_price': request.data.get(f'stream_pricing[{i}][oem_transfer_price]'),
+                    'tax_rate_id': request.data.get(f'stream_pricing[{i}][tax_rate_id]'),
+                }
+                stream_pricing_data.append(pricing_data)
+                i += 1
+
+            # Create stream pricing entries
+            for pricing_data in stream_pricing_data:
+                # Check if any required field is empty - if so, skip the entire entry
+                cost_per_student = pricing_data['cost_per_student']
+                oem_transfer_price = pricing_data['oem_transfer_price']
+                tax_rate_id = pricing_data['tax_rate_id']
+                
+                # Skip entry if any required field is empty
+                if (not cost_per_student or cost_per_student == '' or cost_per_student == '0' or
+                    not oem_transfer_price or oem_transfer_price == '' or oem_transfer_price == '0' or
+                    not tax_rate_id or tax_rate_id == '' or tax_rate_id == '0'):
+                    continue
+                
+                ContractStreamPricing.objects.create(
+                    contract=pricing_data['contract'],
+                    stream_id=pricing_data['stream_id'],
+                    year=pricing_data['year'],
+                    cost_per_student=cost_per_student,
+                    oem_transfer_price=oem_transfer_price,
+                    tax_rate_id=tax_rate_id,
+                )
 
             # Handle files
             logger.info(f"Processing {len(files)} files")
@@ -319,11 +355,10 @@ class ContractViewSet(viewsets.ModelViewSet):
                 'name': request.data.get('name'),
                 'university_id': request.data.get('university'),
                 'oem_id': request.data.get('oem'),
-                'cost_per_student': request.data.get('cost_per_student'),
-                'oem_transfer_price': request.data.get('oem_transfer_price'),
+                'start_year': request.data.get('start_year'),
+                'end_year': request.data.get('end_year'),
                 'start_date': request.data.get('start_date'),
                 'end_date': request.data.get('end_date'),
-                'tax_rate_id': request.data.get('tax_rate'),
                 'status': request.data.get('status'),
                 'notes': request.data.get('notes'),
             }
@@ -353,6 +388,58 @@ class ContractViewSet(viewsets.ModelViewSet):
 
             self.perform_update(serializer)
 
+            # Handle stream pricing data - replace all existing pricing with new data
+            # First, get all existing stream pricing entries for this contract
+            existing_pricing = ContractStreamPricing.objects.filter(contract=instance)
+            existing_pricing_ids = set(existing_pricing.values_list('id', flat=True))
+            
+            # Collect new pricing data
+            new_pricing_ids = set()
+            stream_pricing_data = []
+            i = 0
+            while f'stream_pricing[{i}][stream_id]' in request.data:
+                pricing_data = {
+                    'contract': instance,
+                    'stream_id': request.data.get(f'stream_pricing[{i}][stream_id]'),
+                    'year': request.data.get(f'stream_pricing[{i}][year]'),
+                    'cost_per_student': request.data.get(f'stream_pricing[{i}][cost_per_student]'),
+                    'oem_transfer_price': request.data.get(f'stream_pricing[{i}][oem_transfer_price]'),
+                    'tax_rate_id': request.data.get(f'stream_pricing[{i}][tax_rate_id]'),
+                }
+                stream_pricing_data.append(pricing_data)
+                i += 1
+            
+            # Create or update stream pricing entries
+            for pricing_data in stream_pricing_data:
+                # Check if any required field is empty - if so, skip the entire entry
+                cost_per_student = pricing_data['cost_per_student']
+                oem_transfer_price = pricing_data['oem_transfer_price']
+                tax_rate_id = pricing_data['tax_rate_id']
+                
+                # Skip entry if any required field is empty
+                if (not cost_per_student or cost_per_student == '' or cost_per_student == '0' or
+                    not oem_transfer_price or oem_transfer_price == '' or oem_transfer_price == '0' or
+                    not tax_rate_id or tax_rate_id == '' or tax_rate_id == '0'):
+                    continue
+                
+                pricing_obj, created = ContractStreamPricing.objects.update_or_create(
+                    contract=instance,
+                    stream_id=pricing_data['stream_id'],
+                    year=pricing_data['year'],
+                    defaults={
+                        'cost_per_student': cost_per_student,
+                        'oem_transfer_price': oem_transfer_price,
+                        'tax_rate_id': tax_rate_id,
+                    }
+                )
+                new_pricing_ids.add(pricing_obj.id)
+            
+            # Remove stream pricing entries that are no longer in the request
+            pricing_to_remove = existing_pricing_ids - new_pricing_ids
+            if pricing_to_remove:
+                ContractStreamPricing.objects.filter(id__in=pricing_to_remove).delete()
+                logger.info(f"Removed {len(pricing_to_remove)} stream pricing entries")
+
             # Handle files if present
             files = request.FILES.getlist('files')
             if files:
@@ -375,6 +462,57 @@ class ContractViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    @action(detail=False, methods=['get'])
+    def pricing(self, request):
+        """Get pricing for a specific university, stream, and year"""
+        university_id = request.query_params.get('university')
+        stream_id = request.query_params.get('stream')
+        year = request.query_params.get('year')
+        
+        if not all([university_id, stream_id, year]):
+            return Response(
+                {"error": "university, stream, and year parameters are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Find the contract with matching stream pricing
+            contract = Contract.objects.get(
+                university_id=university_id,
+                stream_pricing__stream_id=stream_id,
+                stream_pricing__year=year,
+                start_year__lte=year,
+                end_year__gte=year
+            )
+            
+            # Get the specific pricing
+            pricing = contract.get_stream_pricing(stream_id, int(year))
+            if pricing:
+                return Response({
+                    'cost_per_student': str(pricing.cost_per_student),
+                    'oem_transfer_price': str(pricing.oem_transfer_price),
+                    'tax_rate': str(pricing.tax_rate.rate) if pricing.tax_rate else "0.00"
+                })
+            else:
+                return Response({
+                    'cost_per_student': "0.00",
+                    'oem_transfer_price': "0.00",
+                    'tax_rate': "0.00"
+                })
+                
+        except Contract.DoesNotExist:
+            return Response({
+                'cost_per_student': "0.00",
+                'oem_transfer_price': "0.00",
+                'tax_rate': "0.00"
+            })
+        except Exception as e:
+            logger.error(f"Error fetching pricing: {str(e)}")
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 class ContractProgramViewSet(viewsets.ModelViewSet):
     queryset = ContractProgram.objects.all()
     serializer_class = ContractProgramSerializer
@@ -382,12 +520,12 @@ class ContractProgramViewSet(viewsets.ModelViewSet):
 
 class BatchFilter(filters.FilterSet):
     stream = filters.NumberFilter(field_name='stream__id')
-    contract = filters.NumberFilter(field_name='contract__id')
+    university = filters.NumberFilter(field_name='university__id')
     status = filters.CharFilter(field_name='status')
     
     class Meta:
         model = Batch
-        fields = ['stream', 'contract', 'status']
+        fields = ['stream', 'university', 'status']
 
 class BatchViewSet(viewsets.ModelViewSet):
     queryset = Batch.objects.all()
@@ -398,7 +536,7 @@ class BatchViewSet(viewsets.ModelViewSet):
     filterset_class = BatchFilter
     ordering_fields = ['name', 'start_year', 'end_year', 'created_at', 'updated_at']
     ordering = ['-created_at']
-    search_fields = ['name', 'notes', 'contract__name', 'stream__name']
+    search_fields = ['name', 'notes', 'university__name', 'stream__name']
 
     def get_queryset(self):
         """Filter queryset based on user permissions"""
@@ -407,17 +545,20 @@ class BatchViewSet(viewsets.ModelViewSet):
         
         # If user is university POC, show only batches for their university
         if user.is_university_poc():
-            queryset = queryset.filter(contract__university__poc=user)
+            queryset = queryset.filter(university__poc=user)
         # If user is provider POC, show only batches for their OEMs
         elif user.is_provider_poc():
-            queryset = queryset.filter(contract__oem__poc=user)
+            # Get contracts for this OEM and filter batches by university
+            oem_contracts = Contract.objects.filter(oem__poc=user)
+            university_ids = oem_contracts.values_list('university_id', flat=True)
+            queryset = queryset.filter(university_id__in=university_ids)
         # If user is staff, show only batches for their assigned universities
         elif user.is_staff_user():
             assigned_universities = user.get_assigned_universities()
-            queryset = queryset.filter(contract__university__in=assigned_universities)
+            queryset = queryset.filter(university__in=assigned_universities)
         # Superusers can see all batches
         
-        return queryset.select_related('contract__university', 'contract__oem', 'stream')
+        return queryset.select_related('university', 'stream').prefetch_related('snapshots')
 
 class BillingViewSet(viewsets.ModelViewSet):
     queryset = Billing.objects.all()
@@ -482,6 +623,95 @@ class BillingViewSet(viewsets.ModelViewSet):
             logger.error(f"Error archiving billing {pk}: {str(e)}")
             return Response(
                 {"error": "Failed to archive billing"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'])
+    def create_university_year_billing(self, request):
+        """Create a billing for a university for a given year with all operational batches"""
+        university_id = request.data.get('university_id')
+        year = request.data.get('year')
+        billing_name = request.data.get('name', f'Billing for {year}')
+        notes = request.data.get('notes', '')
+        
+        if not university_id or not year:
+            return Response(
+                {"error": "university_id and year are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get the university
+            university = University.objects.get(id=university_id)
+            
+            # Find all operational batches for this university and year
+            operational_batches = Batch.objects.filter(
+                university=university,
+                start_year__lte=year,
+                end_year__gte=year,
+                status='ongoing'
+            ).select_related('stream')
+            
+            if not operational_batches.exists():
+                return Response(
+                    {"error": f"No operational batches found for {university.name} in {year}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Create the billing
+            billing = Billing.objects.create(
+                name=billing_name,
+                notes=notes,
+                status='draft'
+            )
+            
+            # Add all operational batches to the billing
+            billing.batches.set(operational_batches)
+            
+            # Calculate totals
+            billing.update_totals()
+            
+            # Return billing data with batch details
+            serializer = self.get_serializer(billing)
+            batch_data = []
+            for batch in operational_batches:
+                batch_data.append({
+                    'id': batch.id,
+                    'name': batch.name,
+                    'stream': batch.stream.name,
+                    'number_of_students': batch.number_of_students,
+                    'start_year': batch.start_year,
+                    'end_year': batch.end_year,
+                    'cost_per_student': str(batch.get_cost_per_student()),
+                    'oem_transfer_price': str(batch.get_oem_transfer_price()),
+                    'tax_rate': str(batch.get_tax_rate().rate) if batch.get_tax_rate() else "0.00"
+                })
+            
+            response_data = {
+                **serializer.data,
+                'batches': batch_data,
+                'university': {
+                    'id': university.id,
+                    'name': university.name
+                },
+                'year': year,
+                'redirect': {
+                    'id': billing.id,
+                    'path': f'/billings/{billing.id}/edit'
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
+            
+        except University.DoesNotExist:
+            return Response(
+                {"error": "University not found"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error creating university year billing: {str(e)}")
+            return Response(
+                {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

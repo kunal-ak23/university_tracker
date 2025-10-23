@@ -471,25 +471,71 @@ class Contract(BaseModel):
     ]
 
     name = models.CharField(max_length=100, unique=True)
-    streams = models.ManyToManyField(Stream, related_name='contracts')
-    cost_per_student = models.DecimalField(max_digits=12, decimal_places=2)
-    tax_rate = models.ForeignKey(TaxRate, on_delete=models.SET_DEFAULT, default=0, related_name='contracts')
     oem = models.ForeignKey(OEM, on_delete=models.CASCADE, related_name='contracts')
     university = models.ForeignKey(University, on_delete=models.CASCADE, related_name='contracts')
-    oem_transfer_price = models.DecimalField(max_digits=12, decimal_places=2)
-    start_date = models.DateField(null=True)
+    start_year = models.PositiveIntegerField(help_text='Contract start year', default=2024)
+    end_year = models.PositiveIntegerField(help_text='Contract end year', default=2025)
+    start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=CONTRACT_STATUS_CHOICES, default='active')
     programs = models.ManyToManyField(Program, through='ContractProgram', related_name='contracts')
     notes = models.TextField(blank=True, null=True)
 
     def __str__(self):
-        return f'Contract {self.name} ({self.university.name} - {self.oem.name})'
+        return f'Contract {self.name} ({self.university.name} - {self.oem.name}) {self.start_year}-{self.end_year}'
 
     def clean(self):
         super().clean()
+        if self.start_year and self.end_year and self.start_year >= self.end_year:
+            raise ValidationError("Start year must be before end year.")
         if self.pk and not self.contract_files.exists():
             raise ValidationError("Contract must have at least one file.")
+
+    def get_stream_pricing(self, stream, year):
+        """Get pricing for a specific stream and year"""
+        try:
+            return self.stream_pricing.get(stream=stream, year=year)
+        except ContractStreamPricing.DoesNotExist:
+            return None
+
+    def get_available_streams(self):
+        """Get all streams that have pricing defined"""
+        return Stream.objects.filter(
+            stream_pricing__contract=self
+        ).distinct()
+
+    def get_available_years(self):
+        """Get all years that have pricing defined"""
+        return self.stream_pricing.values_list('year', flat=True).distinct().order_by('year')
+
+
+class ContractStreamPricing(BaseModel):
+    """Pricing for specific stream and year within a contract"""
+    contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name='stream_pricing')
+    stream = models.ForeignKey(Stream, on_delete=models.CASCADE, related_name='stream_pricing')
+    year = models.PositiveIntegerField(help_text='Year for this pricing')
+    cost_per_student = models.DecimalField(max_digits=12, decimal_places=2, help_text='Cost per student for this stream/year')
+    oem_transfer_price = models.DecimalField(max_digits=12, decimal_places=2, help_text='OEM transfer price for this stream/year')
+    tax_rate = models.ForeignKey(TaxRate, on_delete=models.SET_DEFAULT, default=0, related_name='stream_pricing')
+
+    class Meta:
+        unique_together = ('contract', 'stream', 'year')
+        ordering = ['stream__name', 'year']
+
+    def __str__(self):
+        return f'{self.contract.name} - {self.stream.name} ({self.year}): ₹{self.cost_per_student}'
+
+    def clean(self):
+        super().clean()
+        # Validate year is within contract range
+        if self.contract and self.year:
+            if self.year < self.contract.start_year or self.year > self.contract.end_year:
+                raise ValidationError(f"Year {self.year} must be within contract range {self.contract.start_year}-{self.contract.end_year}")
+        
+        # Validate stream belongs to the same university as contract
+        if self.contract and self.stream:
+            if self.stream.university != self.contract.university:
+                raise ValidationError(f"Stream {self.stream.name} must belong to the same university as the contract")
 
 
 class ContractFile(BaseModel):
@@ -514,7 +560,7 @@ class ContractProgram(BaseModel):
 
 
 class Batch(BaseModel):
-    contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name='batches')
+    university = models.ForeignKey(University, on_delete=models.CASCADE, related_name='batches', null=True, blank=True)
     stream = models.ForeignKey(Stream, on_delete=models.CASCADE, related_name='batches')
     name = models.CharField(max_length=255)
     start_year = models.PositiveIntegerField(help_text='Start Year')
@@ -522,28 +568,6 @@ class Batch(BaseModel):
     number_of_students = models.PositiveIntegerField()
     start_date = models.DateField(null=True)
     end_date = models.DateField(null=True)
-    cost_per_student_override = models.DecimalField(
-        max_digits=12, 
-        decimal_places=2, 
-        null=True, 
-        blank=True,
-        help_text="Override contract's cost per student for this batch"
-    )
-    oem_transfer_price_override = models.DecimalField(
-        max_digits=12, 
-        decimal_places=2, 
-        null=True, 
-        blank=True,
-        help_text="Override contract's OEM transfer price for this batch"
-    )
-    tax_rate_override = models.ForeignKey(
-        TaxRate, 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True,
-        related_name='batch_overrides',
-        help_text="Override contract's tax rate for this batch"
-    )
     status = models.CharField(max_length=20, choices=[
         ('planned', 'Planned'),
         ('ongoing', 'Ongoing'),
@@ -552,24 +576,52 @@ class Batch(BaseModel):
     notes = models.TextField(blank=True, null=True)
 
     def clean(self):
-        # Validate that the stream is part of the contract's streams
-        if not self.contract.streams.filter(id=self.stream.id).exists():
-            raise ValidationError(f"The stream '{self.stream}' is not part of the contract '{self.contract}'.")
+        # Validate that the stream belongs to the same university
+        if self.stream.university != self.university:
+            raise ValidationError(f"The stream '{self.stream}' must belong to the same university as the batch.")
+
+    def get_contract(self):
+        """Get the contract for this batch's university, stream, and year"""
+        try:
+            return Contract.objects.get(
+                university=self.university,
+                stream_pricing__stream=self.stream,
+                stream_pricing__year=self.start_year,
+                start_year__lte=self.start_year,
+                end_year__gte=self.start_year
+            )
+        except Contract.DoesNotExist:
+            return None
 
     def get_cost_per_student(self):
-        """Returns the effective cost per student (override or contract's value)"""
-        return self.cost_per_student_override if self.cost_per_student_override is not None else self.contract.cost_per_student
+        """Returns the cost per student from contract's stream pricing"""
+        contract = self.get_contract()
+        if contract:
+            pricing = contract.get_stream_pricing(self.stream, self.start_year)
+            if pricing:
+                return pricing.cost_per_student
+        return 0
 
     def get_tax_rate(self):
-        """Returns the effective tax rate (override or contract's value)"""
-        return self.tax_rate_override if self.tax_rate_override is not None else self.contract.tax_rate
+        """Returns the tax rate from contract's stream pricing"""
+        contract = self.get_contract()
+        if contract:
+            pricing = contract.get_stream_pricing(self.stream, self.start_year)
+            if pricing:
+                return pricing.tax_rate
+        return None
 
     def get_oem_transfer_price(self):
-        """Returns the effective OEM transfer price (override or contract's value)"""
-        return self.oem_transfer_price_override if self.oem_transfer_price_override is not None else self.contract.oem_transfer_price
+        """Returns the OEM transfer price from contract's stream pricing"""
+        contract = self.get_contract()
+        if contract:
+            pricing = contract.get_stream_pricing(self.stream, self.start_year)
+            if pricing:
+                return pricing.oem_transfer_price
+        return 0
 
     def __str__(self):
-        return f'Batch {self.name} ({self.start_year}-{self.end_year}) for {self.contract}'
+        return f'Batch {self.name} ({self.start_year}-{self.end_year}) for {self.university.name} - {self.stream.name}'
 
 
 class BatchSnapshot(BaseModel):
@@ -674,10 +726,10 @@ class Billing(BaseModel):
     def update_totals(self):
         """Update all total fields based on current data"""
         # Calculate total amount from batch snapshots (including tax)
-        total = sum(
-            snapshot.number_of_students * snapshot.cost_per_student * (1 + snapshot.tax_rate/100)
-            for snapshot in self.batch_snapshots.all()
-        )
+        total = 0
+        for snapshot in self.batch_snapshots.all():
+            tax_rate = snapshot.tax_rate if snapshot.tax_rate is not None else 0
+            total += snapshot.number_of_students * snapshot.cost_per_student * (1 + tax_rate/100)
         self.total_amount = total
 
         # Calculate total payments from invoices and payments
@@ -692,23 +744,36 @@ class Billing(BaseModel):
         self.balance_due = self.total_amount - self.total_payments
 
         # Calculate OEM transfer amount (including tax)
-        self.total_oem_transfer_amount = sum(
-            snapshot.number_of_students * snapshot.oem_transfer_price * (1 + snapshot.tax_rate/100)
-            for snapshot in self.batch_snapshots.all()
-        )
+        oem_total = 0
+        for snapshot in self.batch_snapshots.all():
+            tax_rate = snapshot.tax_rate if snapshot.tax_rate is not None else 0
+            oem_total += snapshot.number_of_students * snapshot.oem_transfer_price * (1 + tax_rate/100)
+        self.total_oem_transfer_amount = oem_total
 
         # Save without triggering update_totals again
         self.save(skip_update=True)
 
     def add_batch_snapshot(self, batch):
         """Create a snapshot of the batch's current state"""
+        # Get pricing information safely
+        tax_rate_obj = batch.get_tax_rate()
+        tax_rate = tax_rate_obj.rate if tax_rate_obj else 0.00
+        
+        cost_per_student = batch.get_cost_per_student()
+        if cost_per_student is None:
+            cost_per_student = 0.00
+            
+        oem_transfer_price = batch.get_oem_transfer_price()
+        if oem_transfer_price is None:
+            oem_transfer_price = 0.00
+        
         snapshot = BatchSnapshot.objects.create(
             batch=batch,
             billing=self,
             number_of_students=batch.number_of_students,
-            cost_per_student=batch.get_cost_per_student(),
-            tax_rate=batch.get_tax_rate().rate,
-            oem_transfer_price=batch.get_oem_transfer_price(),
+            cost_per_student=cost_per_student,
+            tax_rate=tax_rate,
+            oem_transfer_price=oem_transfer_price,
             status=batch.status
         )
         self.update_totals()

@@ -9,7 +9,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
 from .logger_service import get_logger
-from .models import Billing, Payment, OEM, Program, University, Stream, TaxRate, Contract, ContractProgram, Batch, \
+from .models import Billing, Payment, OEM, Program, University, Stream, TaxRate, Contract, ContractProgram, ContractStreamPricing, Batch, \
     Invoice, ContractFile, CustomUser, BatchSnapshot, PaymentDocument, PaymentScheduleRecipient, PaymentSchedule, \
     ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch, UniversityEvent, Expense, \
     StaffUniversityAssignment
@@ -152,13 +152,18 @@ class ContractProgramInline(admin.TabularInline):
     model = ContractProgram
     extra = 0
 
+class ContractStreamPricingInline(admin.TabularInline):
+    model = ContractStreamPricing
+    extra = 0
+    fields = ['stream', 'year', 'cost_per_student', 'oem_transfer_price', 'tax_rate']
+
 @admin.register(Contract)
 class ContractAdmin(admin.ModelAdmin):
     readonly_fields = ['created_at', 'updated_at', 'version']
-    list_display = ['id', 'name', 'cost_per_student', 'tax_rate', 'oem_transfer_price', 'start_date', 'end_date', 'status', 'created_at', 'updated_at']
-    search_fields = ['id', 'name', 'tax_rate__name']
-    list_filter = ['status', 'created_at', 'updated_at']
-    inlines = [ContractFileInline, ContractProgramInline]
+    list_display = ['id', 'name', 'university', 'oem', 'start_year', 'end_year', 'status', 'created_at', 'updated_at']
+    search_fields = ['id', 'name', 'university__name', 'oem__name']
+    list_filter = ['status', 'start_year', 'end_year', 'created_at', 'updated_at']
+    inlines = [ContractFileInline, ContractProgramInline, ContractStreamPricingInline]
 
 @admin.register(ContractProgram)
 class ContractProgramAdmin(admin.ModelAdmin):
@@ -176,7 +181,7 @@ def duplicate_batch(modeladmin, request, queryset):
     batch = queryset.first()
     url = reverse('admin:core_batch_add')
     initial_data = {
-        'contract': batch.contract.id,
+        'university': batch.university.id,
         'stream': batch.stream.id,
         'name': batch.name,
         'start_year': batch.start_year + 1,
@@ -191,20 +196,15 @@ def duplicate_batch(modeladmin, request, queryset):
     return HttpResponseRedirect(f'{url}?{query_string}')
 
 class BatchAdmin(admin.ModelAdmin):
-    list_display = ['name', 'contract', 'stream', 'number_of_students', 'status']
-    search_fields = ['name', 'contract__name', 'stream__name']
-    list_filter = ['status', 'contract', 'stream']
+    list_display = ['name', 'university', 'stream', 'number_of_students', 'start_year', 'status']
+    search_fields = ['name', 'university__name', 'stream__name']
+    list_filter = ['status', 'university', 'stream', 'start_year']
     fieldsets = (
         (None, {
-            'fields': ('name', 'contract', 'stream', 'number_of_students')
+            'fields': ('name', 'university', 'stream', 'number_of_students')
         }),
         ('Dates', {
             'fields': ('start_year', 'end_year', 'start_date', 'end_date')
-        }),
-        ('Cost Overrides', {
-            'fields': ('cost_per_student_override', 'tax_rate_override', 'oem_transfer_price_override'),
-            'classes': ('collapse',),
-            'description': 'Override contract costs for this specific batch'
         }),
         ('Status', {
             'fields': ('status', 'notes')

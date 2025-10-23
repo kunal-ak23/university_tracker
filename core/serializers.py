@@ -10,7 +10,7 @@ from datetime import date
 logger = get_logger()
 
 from .models import (
-    OEM, Program, CustomUser, University, Contract, ContractProgram, Batch,
+    OEM, Program, CustomUser, University, Contract, ContractProgram, ContractStreamPricing, Batch,
     Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice,
     PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient,
     ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
@@ -76,76 +76,120 @@ class ContractProgramSerializer(serializers.ModelSerializer):
         model = ContractProgram
         fields = '__all__'
 
+class ContractStreamPricingSerializer(serializers.ModelSerializer):
+    stream = StreamSerializer(read_only=True)
+    stream_id = serializers.PrimaryKeyRelatedField(queryset=Stream.objects.all(), source='stream', write_only=True)
+    tax_rate = TaxRateSerializer(read_only=True)
+    tax_rate_id = serializers.PrimaryKeyRelatedField(queryset=TaxRate.objects.all(), source='tax_rate', write_only=True)
+
+    class Meta:
+        model = ContractStreamPricing
+        fields = [
+            'id', 'stream', 'stream_id', 'year', 'cost_per_student', 
+            'oem_transfer_price', 'tax_rate', 'tax_rate_id', 'created_at', 'updated_at'
+        ]
+
 class ContractSerializer(serializers.ModelSerializer):
     contract_programs = ContractProgramSerializer(many=True, read_only=True)
     contract_files = ContractFileSerializer(many=True, read_only=True)
-    streams = StreamSerializer(many=True, read_only=True)
+    stream_pricing = ContractStreamPricingSerializer(many=True, read_only=True)
     oem = OEMSerializer(read_only=True)
     university = UniversitySerializer(read_only=True)
     programs = ProgramSerializer(many=True, read_only=True)
-    tax_rate = TaxRateSerializer(read_only=True)
     oem_id = serializers.PrimaryKeyRelatedField(queryset=OEM.objects.all(), source='oem', write_only=True)
     university_id = serializers.PrimaryKeyRelatedField(queryset=University.objects.all(), source='university', write_only=True)
-    tax_rate_id = serializers.PrimaryKeyRelatedField(queryset=TaxRate.objects.all(), source='tax_rate', write_only=True)
     programs_ids = serializers.PrimaryKeyRelatedField(many=True, queryset=Program.objects.all(), write_only=True, source='programs')
-    streams_ids = serializers.PrimaryKeyRelatedField(many=True, queryset=Stream.objects.all(), write_only=True, source='streams')
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Contract
         fields = [
-            'id', 'name', 'cost_per_student', 'oem_transfer_price',
-            'start_date', 'end_date', 'status', 'notes', 'tax_rate',
-            'contract_programs', 'contract_files', 'streams', 'oem', 
-            'university', 'programs', 'oem_id', 'university_id', 'tax_rate_id',
-            'programs_ids', 'streams_ids', 'created_at', 'updated_at'
-        ]
-
-class BatchSerializer(serializers.ModelSerializer):
-    effective_cost_per_student = serializers.DecimalField(
-        max_digits=12, 
-        decimal_places=2,
-        read_only=True,
-        source='get_cost_per_student'
-    )
-    effective_tax_rate = serializers.DecimalField(
-        max_digits=5, 
-        decimal_places=2,
-        read_only=True,
-        source='get_tax_rate.rate'
-    )
-    effective_oem_transfer_price = serializers.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        read_only=True,
-        source='get_oem_transfer_price'
-    )
-
-    class Meta:
-        model = Batch
-        fields = [
-            'id', 'name', 'contract', 'stream', 'number_of_students',
-            'start_year', 'end_year', 'start_date', 'end_date',
-            'cost_per_student_override', 'tax_rate_override',
-            'oem_transfer_price_override', 'effective_cost_per_student',
-            'effective_tax_rate', 'effective_oem_transfer_price',
-            'status', 'notes'
+            'id', 'name', 'start_year', 'end_year', 'start_date', 'end_date', 
+            'status', 'notes', 'contract_programs', 'contract_files', 
+            'stream_pricing', 'oem', 'university', 'programs', 
+            'oem_id', 'university_id', 'programs_ids', 'created_at', 'updated_at'
         ]
 
 class BatchSnapshotSerializer(serializers.ModelSerializer):
     batch_name = serializers.CharField(source='batch.name', read_only=True)
-    batch_stream = serializers.CharField(source='batch.stream.name', read_only=True)
-    batch_contract = serializers.CharField(source='batch.contract.name', read_only=True)
+    batch_stream = serializers.SerializerMethodField()
+    batch_university = serializers.SerializerMethodField()
+    billing_name = serializers.SerializerMethodField()
+
+    def get_batch_stream(self, obj):
+        """Get the stream name safely, handling null values"""
+        if obj.batch.stream:
+            return obj.batch.stream.name
+        return "No Stream"
+
+    def get_batch_university(self, obj):
+        """Get the university name safely, handling null values"""
+        if obj.batch.university:
+            return obj.batch.university.name
+        return "No University"
+
+    def get_billing_name(self, obj):
+        """Get the billing name safely, handling null values"""
+        if obj.billing:
+            return obj.billing.name
+        return "No Billing"
 
     class Meta:
         model = BatchSnapshot
         fields = [
-            'id', 'batch', 'batch_name', 'batch_stream', 'batch_contract',
-            'number_of_students', 'cost_per_student', 'tax_rate', 
+            'id', 'batch', 'batch_name', 'batch_stream', 'batch_university',
+            'billing_name', 'number_of_students', 'cost_per_student', 'tax_rate', 
             'oem_transfer_price', 'status', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
+
+class BatchSerializer(serializers.ModelSerializer):
+    university = serializers.SerializerMethodField()
+    university_id = serializers.PrimaryKeyRelatedField(queryset=University.objects.all(), source='university', write_only=True)
+    stream = serializers.SerializerMethodField()
+    stream_id = serializers.PrimaryKeyRelatedField(queryset=Stream.objects.all(), source='stream', write_only=True)
+    effective_cost_per_student = serializers.SerializerMethodField()
+    effective_tax_rate = serializers.SerializerMethodField()
+    effective_oem_transfer_price = serializers.SerializerMethodField()
+    snapshots = BatchSnapshotSerializer(many=True, read_only=True)
+
+    def get_university(self, obj):
+        """Get the university data safely, handling None values"""
+        if obj.university:
+            return UniversitySerializer(obj.university).data
+        return None
+
+    def get_stream(self, obj):
+        """Get the stream data safely, handling None values"""
+        if obj.stream:
+            return StreamSerializer(obj.stream).data
+        return None
+
+    def get_effective_cost_per_student(self, obj):
+        """Get the effective cost per student, handling None values"""
+        cost = obj.get_cost_per_student()
+        return cost if cost is not None else 0.00
+
+    def get_effective_tax_rate(self, obj):
+        """Get the effective tax rate, handling None values"""
+        tax_rate_obj = obj.get_tax_rate()
+        return tax_rate_obj.rate if tax_rate_obj else 0.00
+
+    def get_effective_oem_transfer_price(self, obj):
+        """Get the effective OEM transfer price, handling None values"""
+        price = obj.get_oem_transfer_price()
+        return price if price is not None else 0.00
+
+    class Meta:
+        model = Batch
+        fields = [
+            'id', 'name', 'university', 'university_id', 'stream', 'stream_id', 
+            'number_of_students', 'start_year', 'end_year', 'start_date', 'end_date',
+            'effective_cost_per_student', 'effective_tax_rate', 'effective_oem_transfer_price',
+            'status', 'notes', 'snapshots', 'created_at', 'updated_at'
+        ]
+
 
 class PaymentDocumentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -211,6 +255,15 @@ class BillingSerializer(serializers.ModelSerializer):
             'total_oem_transfer_amount', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at', 'status']
+
+    def create(self, validated_data):
+        """Create billing with proper handling of 0 values"""
+        try:
+            billing = super().create(validated_data)
+            return billing
+        except Exception as e:
+            logger.error(f"Error creating billing: {str(e)}")
+            raise serializers.ValidationError(f"Failed to create billing: {str(e)}")
 
 class PaymentScheduleRecipientSerializer(serializers.ModelSerializer):
     class Meta:
