@@ -1364,15 +1364,25 @@ class UniversityEventViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(university__poc=user)
         # If user is provider POC, show events for their OEMs
         elif user.is_provider_poc():
-            queryset = queryset.filter(batch__contract__oem__poc=user)
+            # Get contracts for this OEM and filter events by university
+            oem_contracts = Contract.objects.filter(oem__poc=user)
+            university_ids = oem_contracts.values_list('university_id', flat=True)
+            queryset = queryset.filter(university_id__in=university_ids)
         # If user is staff, show events for their assigned universities
         elif user.is_staff_user():
             assigned_universities = user.get_assigned_universities()
             queryset = queryset.filter(university__in=assigned_universities)
+        # Superusers can see all events
         
         return queryset.select_related(
             'university', 'batch', 'created_by', 'approved_by'
         )
+
+    def list(self, request, *args, **kwargs):
+        """Override list method to add debugging"""
+        # Call parent list method
+        response = super().list(request, *args, **kwargs)
+        return response
 
     def update(self, request, *args, **kwargs):
         """Update event with permission check"""

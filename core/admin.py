@@ -339,8 +339,7 @@ class UniversityEventAdmin(admin.ModelAdmin):
     ]
     readonly_fields = [
         'created_at', 'updated_at', 'version', 'submitted_for_approval_at',
-        'approved_at', 'email_sent_count', 'email_sent_at',
-        'notion_page_id', 'notion_page_url', 'integration_notes'
+        'approved_at', 'notion_page_id', 'notion_page_url', 'integration_notes'
     ]
     fieldsets = (
         ('Event Information', {
@@ -353,8 +352,7 @@ class UniversityEventAdmin(admin.ModelAdmin):
             'fields': ('status', 'submitted_for_approval_at', 'approved_by', 'approved_at', 'rejection_reason')
         }),
         ('Integration', {
-            'fields': ('integration_status', 'email_sent_count', 'email_sent_at',
-                      'notion_page_id', 'notion_page_url', 'integration_notes'),
+            'fields': ('integration_status', 'notion_page_id', 'notion_page_url', 'integration_notes'),
             'classes': ('collapse',)
         }),
         ('Additional Information', {

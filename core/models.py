@@ -157,15 +157,11 @@ class UniversityEvent(BaseModel):
     rejection_reason = models.TextField(blank=True, null=True)
     
     # Integration tracking fields
-    email_sent_count = models.PositiveIntegerField(default=0, help_text="Number of emails sent")
-    email_sent_at = models.DateTimeField(blank=True, null=True, help_text="When emails were sent")
     notion_page_id = models.CharField(max_length=255, blank=True, null=True, help_text="Notion Page ID")
     notion_page_url = models.URLField(blank=True, null=True, help_text="Notion Page URL")
     integration_status = models.CharField(max_length=20, choices=[
         ('pending', 'Pending'),
-        ('email_sent', 'Email Sent'),
         ('notion_created', 'Notion Created'),
-        ('both_completed', 'Both Completed'),
         ('failed', 'Failed'),
     ], default='pending')
     integration_notes = models.TextField(blank=True, null=True, help_text="Notes about integration status")
@@ -183,28 +179,32 @@ class UniversityEvent(BaseModel):
             if self.start_datetime >= self.end_datetime:
                 raise ValidationError("End datetime must be after start datetime.")
         
-        if self.batch and self.batch.contract.university != self.university:
-            raise ValidationError("The selected batch must belong to this university.")
+        if self.batch:
+            contract = self.batch.get_contract()
+            if contract and contract.university != self.university:
+                raise ValidationError("The selected batch must belong to this university.")
 
     def get_invitees(self):
         """Returns list of people to whom invites should be extended"""
         invitees = []
         
         # Add university POC
-        if self.university.poc:
+        if self.university and self.university.poc:
             invitees.append({
                 'name': self.university.poc.get_full_name() or self.university.poc.username,
                 'email': self.university.poc.email,
                 'role': 'University POC'
             })
         
-        # Add OEM POC if batch is associated
-        if self.batch and self.batch.contract.oem.poc:
-            invitees.append({
-                'name': self.batch.contract.oem.poc.get_full_name() or self.batch.contract.oem.poc.username,
-                'email': self.batch.contract.oem.poc.email,
-                'role': 'OEM POC'
-            })
+        # Add OEM POC if batch is associated and has a contract
+        if self.batch:
+            contract = self.batch.get_contract()
+            if contract and contract.oem and contract.oem.poc:
+                invitees.append({
+                    'name': contract.oem.poc.get_full_name() or contract.oem.poc.username,
+                    'email': contract.oem.poc.email,
+                    'role': 'OEM POC'
+                })
         
         # Add batch-specific invitees if batch is associated
         if self.batch:
@@ -333,19 +333,6 @@ class UniversityEvent(BaseModel):
 
 
 
-    def mark_email_sent(self, email_count):
-        """Mark emails as sent"""
-        self.email_sent_count = email_count
-        self.email_sent_at = timezone.now()
-        
-        if self.integration_status == 'pending':
-            self.integration_status = 'email_sent'
-        elif self.integration_status == 'notion_created':
-            self.integration_status = 'both_completed'
-        
-        # Set flag to prevent infinite recursion
-        self._integration_update = True
-        self.save(update_fields=['email_sent_count', 'email_sent_at', 'integration_status'])
 
     def mark_notion_created(self, page_id, page_url):
         """Mark Notion page as created"""
@@ -354,8 +341,6 @@ class UniversityEvent(BaseModel):
         
         if self.integration_status == 'pending':
             self.integration_status = 'notion_created'
-        elif self.integration_status == 'email_sent':
-            self.integration_status = 'both_completed'
         
         # Set flag to prevent infinite recursion
         self._integration_update = True
