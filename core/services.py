@@ -15,8 +15,9 @@ logger = logging.getLogger('django')
 class ContractService:
     @staticmethod
     def validate_contract(contract):
-        if not contract.streams.exists():
-            raise ValidationError("Contract must have at least one stream.")
+        # Check if contract has streams through stream_pricing
+        if not contract.stream_pricing.exists():
+            raise ValidationError("Contract must have at least one stream pricing entry.")
         if not contract.programs.exists():
             raise ValidationError("Contract must have at least one program.")
 

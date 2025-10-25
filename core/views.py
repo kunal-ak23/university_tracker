@@ -290,39 +290,106 @@ class ContractViewSet(viewsets.ModelViewSet):
             # Handle stream pricing data
             stream_pricing_data = []
             i = 0
-            while f'stream_pricing[{i}][stream_id]' in request.data:
-                pricing_data = {
-                    'contract': serializer.instance,
-                    'stream_id': request.data.get(f'stream_pricing[{i}][stream_id]'),
-                    'year': request.data.get(f'stream_pricing[{i}][year]'),
-                    'cost_per_student': request.data.get(f'stream_pricing[{i}][cost_per_student]'),
-                    'oem_transfer_price': request.data.get(f'stream_pricing[{i}][oem_transfer_price]'),
-                    'tax_rate_id': request.data.get(f'stream_pricing[{i}][tax_rate_id]'),
-                }
-                stream_pricing_data.append(pricing_data)
-                i += 1
+            
+            # Try different field name patterns for stream pricing
+            field_patterns = [
+                'stream_pricing[0][stream_id]',
+                '1_stream_pricing[0][stream_id]',  # With prefix
+            ]
+            
+            # Find which pattern works
+            field_pattern = None
+            for pattern in field_patterns:
+                if pattern in request.data:
+                    field_pattern = pattern
+                    break
+            
+            print(f"🔧 Backend: Field pattern detection - checking patterns: {field_patterns}")
+            print(f"🔧 Backend: Available keys in request.data: {list(request.data.keys())}")
+            print(f"🔧 Backend: Selected field pattern: {field_pattern}")
+            
+            if field_pattern:
+                # Extract the base pattern for other fields
+                # Remove [0][stream_id] to get just 'stream_pricing'
+                base_pattern = field_pattern.replace('[0][stream_id]', '')
+                print(f"🔧 Backend: Base pattern extracted: {base_pattern}")
+                
+                while f'{base_pattern}[{i}][stream_id]' in request.data:
+                    print(f"🔧 Backend: Found pricing entry {i} with pattern: {base_pattern}[{i}][stream_id]")
+                    # Get program_id from the pricing data, or fall back to the first program in the contract
+                    program_id = request.data.get(f'{base_pattern}[{i}][program_id]')
+                    if not program_id:
+                        # If no program_id in pricing data, use the first program from the contract
+                        programs = request.data.getlist('programs_ids[]') or request.data.getlist('programs[]')
+                        if programs:
+                            program_id = programs[0]  # Use the first program
+                    
+                    pricing_data = {
+                        'contract': serializer.instance,
+                        'program_id': program_id,
+                        'stream_id': request.data.get(f'{base_pattern}[{i}][stream_id]'),
+                        'year': request.data.get(f'{base_pattern}[{i}][year]'),
+                        'cost_per_student': request.data.get(f'{base_pattern}[{i}][cost_per_student]'),
+                        'oem_transfer_price': request.data.get(f'{base_pattern}[{i}][oem_transfer_price]'),
+                        'tax_rate_id': request.data.get(f'{base_pattern}[{i}][tax_rate_id]'),
+                    }
+                    stream_pricing_data.append(pricing_data)
+                    i += 1
+                    
+                    # Safety check to prevent infinite loops
+                    if i > 1000:
+                        break
 
             # Create stream pricing entries
-            for pricing_data in stream_pricing_data:
+            print(f"🔧 Backend: Processing {len(stream_pricing_data)} stream pricing entries")
+            
+            # Safety limit to prevent infinite loops
+            if len(stream_pricing_data) > 100:
+                print(f"🔧 ❌ Too many stream pricing entries ({len(stream_pricing_data)}), limiting to 100")
+                stream_pricing_data = stream_pricing_data[:100]
+            
+            created_count = 0
+            skipped_count = 0
+            
+            for i, pricing_data in enumerate(stream_pricing_data):
+                print(f"🔧 Backend: Processing pricing entry {i}: {pricing_data}")
+                
                 # Check if any required field is empty - if so, skip the entire entry
                 cost_per_student = pricing_data['cost_per_student']
                 oem_transfer_price = pricing_data['oem_transfer_price']
                 tax_rate_id = pricing_data['tax_rate_id']
+                program_id = pricing_data['program_id']
                 
-                # Skip entry if any required field is empty
+                # Skip entry if any required field is empty or null
                 if (not cost_per_student or cost_per_student == '' or cost_per_student == '0' or
                     not oem_transfer_price or oem_transfer_price == '' or oem_transfer_price == '0' or
-                    not tax_rate_id or tax_rate_id == '' or tax_rate_id == '0'):
+                    not tax_rate_id or tax_rate_id == '' or tax_rate_id == '0' or
+                    not program_id or program_id == '' or program_id == '0'):
+                    print(f"🔧 Backend: Skipping entry {i} - missing required fields")
+                    skipped_count += 1
                     continue
                 
-                ContractStreamPricing.objects.create(
-                    contract=pricing_data['contract'],
-                    stream_id=pricing_data['stream_id'],
-                    year=pricing_data['year'],
-                    cost_per_student=cost_per_student,
-                    oem_transfer_price=oem_transfer_price,
-                    tax_rate_id=tax_rate_id,
-                )
+                try:
+                    pricing_obj, created = ContractStreamPricing.objects.get_or_create(
+                        contract=pricing_data['contract'],
+                        program_id=program_id,
+                        stream_id=pricing_data['stream_id'],
+                        year=pricing_data['year'],
+                        defaults={
+                            'cost_per_student': cost_per_student,
+                            'oem_transfer_price': oem_transfer_price,
+                            'tax_rate_id': tax_rate_id,
+                        }
+                    )
+                    if created:
+                        print(f"🔧 Backend: ✅ Created pricing entry {i}: {pricing_obj}")
+                        created_count += 1
+                    else:
+                        print(f"🔧 Backend: ⚠️ Pricing entry {i} already exists: {pricing_obj}")
+                except Exception as e:
+                    print(f"🔧 Backend: ❌ Error creating pricing entry {i}: {e}")
+            
+            print(f"🔧 Backend: Summary - Created: {created_count}, Skipped: {skipped_count}")
 
             # Handle files
             logger.info(f"Processing {len(files)} files")
@@ -334,6 +401,24 @@ class ContractViewSet(viewsets.ModelViewSet):
                     description=file.name,
                     uploaded_by=request.user
                 )
+
+            # Log final contract data
+            print(f"🔧 Backend: Contract created with ID: {serializer.instance.id}")
+            print(f"🔧 Backend: Contract name: {serializer.instance.name}")
+            print(f"🔧 Backend: Contract programs: {list(serializer.instance.programs.values_list('id', flat=True))}")
+            
+            # Get streams from stream_pricing relationship
+            streams_from_pricing = list(serializer.instance.stream_pricing.values_list('stream_id', flat=True).distinct())
+            print(f"🔧 Backend: Contract streams (from pricing): {streams_from_pricing}")
+            
+            # Check stream pricing in database
+            pricing_count = ContractStreamPricing.objects.filter(contract=serializer.instance).count()
+            print(f"🔧 Backend: Stream pricing entries in DB: {pricing_count}")
+            
+            if pricing_count > 0:
+                pricing_entries = ContractStreamPricing.objects.filter(contract=serializer.instance)
+                for entry in pricing_entries:
+                    print(f"🔧 Backend: DB Entry - Program: {entry.program_id}, Stream: {entry.stream_id}, Year: {entry.year}, Cost: {entry.cost_per_student}")
 
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -347,8 +432,9 @@ class ContractViewSet(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
+            print(f"🔧 CONTRACT UPDATE CALLED - Contract ID: {instance.id}")
+            
             logger.info(f"Updating contract {instance.id}")
-            logger.info(f"Request data: {request.data}")
             
             # Handle contract data
             contract_data = {
@@ -362,10 +448,15 @@ class ContractViewSet(viewsets.ModelViewSet):
                 'status': request.data.get('status'),
                 'notes': request.data.get('notes'),
             }
+            
+            print(f"🔧 Contract data extracted: {contract_data}")
 
             # Handle array fields
             programs = request.data.getlist('programs_ids[]') or request.data.getlist('programs[]')
             streams = request.data.getlist('streams_ids[]') or request.data.getlist('streams[]')
+            
+            print(f"🔧 Programs found: {programs}")
+            print(f"🔧 Streams found: {streams}")
             
             if programs:
                 contract_data['programs_ids'] = programs
@@ -375,55 +466,120 @@ class ContractViewSet(viewsets.ModelViewSet):
             # Remove None values
             contract_data = {k: v for k, v in contract_data.items() if v is not None}
             
+            print(f"🔧 Final contract data: {contract_data}")
             logger.info(f"Processed contract data: {contract_data}")
 
             # Update contract
+            print(f"🔧 Updating contract with serializer...")
             serializer = self.get_serializer(instance, data=contract_data, partial=True)
             if not serializer.is_valid():
+                print(f"🔧 ❌ Serializer validation failed: {serializer.errors}")
                 logger.error(f"Validation errors: {serializer.errors}")
                 return Response(
                     {"errors": serializer.errors},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            print(f"🔧 ✅ Serializer validation passed, performing update...")
             self.perform_update(serializer)
+            print(f"🔧 ✅ Contract update completed")
 
             # Handle stream pricing data - replace all existing pricing with new data
+            print(f"🔧 Processing stream pricing data...")
             # First, get all existing stream pricing entries for this contract
             existing_pricing = ContractStreamPricing.objects.filter(contract=instance)
             existing_pricing_ids = set(existing_pricing.values_list('id', flat=True))
+            print(f"🔧 Found {len(existing_pricing_ids)} existing pricing entries: {existing_pricing_ids}")
             
             # Collect new pricing data
             new_pricing_ids = set()
             stream_pricing_data = []
             i = 0
-            while f'stream_pricing[{i}][stream_id]' in request.data:
-                pricing_data = {
-                    'contract': instance,
-                    'stream_id': request.data.get(f'stream_pricing[{i}][stream_id]'),
-                    'year': request.data.get(f'stream_pricing[{i}][year]'),
-                    'cost_per_student': request.data.get(f'stream_pricing[{i}][cost_per_student]'),
-                    'oem_transfer_price': request.data.get(f'stream_pricing[{i}][oem_transfer_price]'),
-                    'tax_rate_id': request.data.get(f'stream_pricing[{i}][tax_rate_id]'),
-                }
-                stream_pricing_data.append(pricing_data)
-                i += 1
             
-            # Create or update stream pricing entries
+            # Try different field name patterns for stream pricing
+            field_patterns = [
+                'stream_pricing[0][stream_id]',
+                '1_stream_pricing[0][stream_id]',  # With prefix
+                f'{instance.id}_stream_pricing[0][stream_id]'  # With contract ID prefix
+            ]
+            
+            print(f"🔧 Trying field patterns: {field_patterns}")
+            print(f"🔧 Available keys in request.data: {list(request.data.keys())}")
+            logger.info(f"Trying field patterns: {field_patterns}")
+            
+            # Find which pattern works
+            field_pattern = None
+            for pattern in field_patterns:
+                if pattern in request.data:
+                    field_pattern = pattern
+                    break
+            
+            print(f"🔧 Update: Selected field pattern: {field_pattern}")
+            
+            if field_pattern:
+                # Extract the base pattern for other fields
+                # Remove [0][stream_id] to get just the base pattern
+                base_pattern = field_pattern.replace('[0][stream_id]', '')
+                print(f"🔧 Update: Base pattern extracted: {base_pattern}")
+                
+                while f'{base_pattern}[{i}][stream_id]' in request.data:
+                    print(f"🔧 Update: Found pricing entry {i} with pattern: {base_pattern}[{i}][stream_id]")
+                    # Get program_id from the pricing data, or fall back to the first program in the contract
+                    program_id = request.data.get(f'{base_pattern}[{i}][program_id]')
+                    if not program_id:
+                        # If no program_id in pricing data, use the first program from the contract
+                        programs = request.data.getlist('programs_ids[]') or request.data.getlist('programs[]')
+                        if programs:
+                            program_id = programs[0]  # Use the first program
+                    
+                    year_value = request.data.get(f'{base_pattern}[{i}][year]')
+                    cost_per_student = request.data.get(f'{base_pattern}[{i}][cost_per_student]')
+                    oem_transfer_price = request.data.get(f'{base_pattern}[{i}][oem_transfer_price]')
+                    
+                    pricing_data = {
+                        'contract': instance,
+                        'program_id': program_id,
+                        'stream_id': request.data.get(f'{base_pattern}[{i}][stream_id]'),
+                        'year': year_value,
+                        'cost_per_student': cost_per_student,
+                        'oem_transfer_price': oem_transfer_price,
+                        'tax_rate_id': request.data.get(f'{base_pattern}[{i}][tax_rate_id]'),
+                    }
+                    stream_pricing_data.append(pricing_data)
+                    print(f"🔧 Added pricing data for index {i}: {pricing_data}")
+                    i += 1
+                    
+                    # Safety check to prevent infinite loops
+                    if i > 1000:
+                        print(f"🔧 ❌ Breaking loop at index {i} to prevent infinite loop")
+                        break
+                
+                print(f"🔧 Total stream pricing entries found: {len(stream_pricing_data)}")
+            else:
+                print(f"🔧 ❌ No field pattern matched for stream pricing data")
+            
+            # Safety limit to prevent infinite loops
+            if len(stream_pricing_data) > 100:
+                print(f"🔧 ❌ Too many stream pricing entries ({len(stream_pricing_data)}), limiting to 100")
+                stream_pricing_data = stream_pricing_data[:100]
+            
             for pricing_data in stream_pricing_data:
                 # Check if any required field is empty - if so, skip the entire entry
                 cost_per_student = pricing_data['cost_per_student']
                 oem_transfer_price = pricing_data['oem_transfer_price']
                 tax_rate_id = pricing_data['tax_rate_id']
+                program_id = pricing_data['program_id']
                 
-                # Skip entry if any required field is empty
+                # Skip entry if any required field is empty or null
                 if (not cost_per_student or cost_per_student == '' or cost_per_student == '0' or
                     not oem_transfer_price or oem_transfer_price == '' or oem_transfer_price == '0' or
-                    not tax_rate_id or tax_rate_id == '' or tax_rate_id == '0'):
+                    not tax_rate_id or tax_rate_id == '' or tax_rate_id == '0' or
+                    not program_id or program_id == '' or program_id == '0'):
                     continue
                 
                 pricing_obj, created = ContractStreamPricing.objects.update_or_create(
                     contract=instance,
+                    program_id=pricing_data['program_id'],
                     stream_id=pricing_data['stream_id'],
                     year=pricing_data['year'],
                     defaults={
@@ -438,12 +594,10 @@ class ContractViewSet(viewsets.ModelViewSet):
             pricing_to_remove = existing_pricing_ids - new_pricing_ids
             if pricing_to_remove:
                 ContractStreamPricing.objects.filter(id__in=pricing_to_remove).delete()
-                logger.info(f"Removed {len(pricing_to_remove)} stream pricing entries")
 
             # Handle files if present
             files = request.FILES.getlist('files')
             if files:
-                logger.info(f"Processing {len(files)} files")
                 for file in files:
                     ContractFile.objects.create(
                         contract=instance,
@@ -453,9 +607,11 @@ class ContractViewSet(viewsets.ModelViewSet):
                         uploaded_by=request.user
                     )
 
+            print(f"🔧 ✅ Contract update completed successfully!")
             return Response(serializer.data)
 
         except Exception as e:
+            print(f"🔧 ❌ Contract update error: {str(e)}")
             logger.error(f"Contract update error: {str(e)}")
             return Response(
                 {"error": str(e)},
@@ -466,12 +622,13 @@ class ContractViewSet(viewsets.ModelViewSet):
     def pricing(self, request):
         """Get pricing for a specific university, stream, and year"""
         university_id = request.query_params.get('university')
+        program_id = request.query_params.get('program')
         stream_id = request.query_params.get('stream')
         year = request.query_params.get('year')
         
-        if not all([university_id, stream_id, year]):
+        if not all([university_id, program_id, stream_id, year]):
             return Response(
-                {"error": "university, stream, and year parameters are required"},
+                {"error": "university, program, stream, and year parameters are required"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -479,6 +636,7 @@ class ContractViewSet(viewsets.ModelViewSet):
             # Find the contract with matching stream pricing
             contract = Contract.objects.get(
                 university_id=university_id,
+                stream_pricing__program_id=program_id,
                 stream_pricing__stream_id=stream_id,
                 stream_pricing__year=year,
                 start_year__lte=year,
@@ -486,7 +644,7 @@ class ContractViewSet(viewsets.ModelViewSet):
             )
             
             # Get the specific pricing
-            pricing = contract.get_stream_pricing(stream_id, int(year))
+            pricing = contract.get_stream_pricing(program_id, stream_id, int(year))
             if pricing:
                 return Response({
                     'cost_per_student': str(pricing.cost_per_student),

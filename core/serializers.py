@@ -77,6 +77,8 @@ class ContractProgramSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ContractStreamPricingSerializer(serializers.ModelSerializer):
+    program = ProgramSerializer(read_only=True)
+    program_id = serializers.PrimaryKeyRelatedField(queryset=Program.objects.all(), source='program', write_only=True)
     stream = StreamSerializer(read_only=True)
     stream_id = serializers.PrimaryKeyRelatedField(queryset=Stream.objects.all(), source='stream', write_only=True)
     tax_rate = TaxRateSerializer(read_only=True)
@@ -85,7 +87,7 @@ class ContractStreamPricingSerializer(serializers.ModelSerializer):
     class Meta:
         model = ContractStreamPricing
         fields = [
-            'id', 'stream', 'stream_id', 'year', 'cost_per_student', 
+            'id', 'program', 'program_id', 'stream', 'stream_id', 'year', 'cost_per_student', 
             'oem_transfer_price', 'tax_rate', 'tax_rate_id', 'created_at', 'updated_at'
         ]
 
@@ -93,6 +95,7 @@ class ContractSerializer(serializers.ModelSerializer):
     contract_programs = ContractProgramSerializer(many=True, read_only=True)
     contract_files = ContractFileSerializer(many=True, read_only=True)
     stream_pricing = ContractStreamPricingSerializer(many=True, read_only=True)
+    streams = serializers.SerializerMethodField()
     oem = OEMSerializer(read_only=True)
     university = UniversitySerializer(read_only=True)
     programs = ProgramSerializer(many=True, read_only=True)
@@ -102,12 +105,23 @@ class ContractSerializer(serializers.ModelSerializer):
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
 
+    def get_streams(self, obj):
+        """Get unique streams from stream_pricing"""
+        streams = obj.stream_pricing.values('stream_id', 'stream__name', 'stream__duration', 'stream__duration_unit', 'stream__description').distinct()
+        return [{
+            'id': stream['stream_id'],
+            'name': stream['stream__name'],
+            'duration': stream['stream__duration'],
+            'duration_unit': stream['stream__duration_unit'],
+            'description': stream['stream__description']
+        } for stream in streams]
+
     class Meta:
         model = Contract
         fields = [
             'id', 'name', 'start_year', 'end_year', 'start_date', 'end_date', 
             'status', 'notes', 'contract_programs', 'contract_files', 
-            'stream_pricing', 'oem', 'university', 'programs', 
+            'stream_pricing', 'streams', 'oem', 'university', 'programs', 
             'oem_id', 'university_id', 'programs_ids', 'created_at', 'updated_at'
         ]
 

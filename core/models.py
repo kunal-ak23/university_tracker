@@ -455,7 +455,7 @@ class Contract(BaseModel):
         ('archived', 'Archived'),
     ]
 
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100)
     oem = models.ForeignKey(OEM, on_delete=models.CASCADE, related_name='contracts')
     university = models.ForeignKey(University, on_delete=models.CASCADE, related_name='contracts')
     start_year = models.PositiveIntegerField(help_text='Contract start year', default=2024)
@@ -465,6 +465,9 @@ class Contract(BaseModel):
     status = models.CharField(max_length=20, choices=CONTRACT_STATUS_CHOICES, default='active')
     programs = models.ManyToManyField(Program, through='ContractProgram', related_name='contracts')
     notes = models.TextField(blank=True, null=True)
+
+    class Meta:
+        unique_together = [['name', 'oem', 'university']]
 
     def __str__(self):
         return f'Contract {self.name} ({self.university.name} - {self.oem.name}) {self.start_year}-{self.end_year}'
@@ -476,10 +479,10 @@ class Contract(BaseModel):
         if self.pk and not self.contract_files.exists():
             raise ValidationError("Contract must have at least one file.")
 
-    def get_stream_pricing(self, stream, year):
-        """Get pricing for a specific stream and year"""
+    def get_stream_pricing(self, program, stream, year):
+        """Get pricing for a specific program, stream and year"""
         try:
-            return self.stream_pricing.get(stream=stream, year=year)
+            return self.stream_pricing.get(program=program, stream=stream, year=year)
         except ContractStreamPricing.DoesNotExist:
             return None
 
@@ -495,20 +498,21 @@ class Contract(BaseModel):
 
 
 class ContractStreamPricing(BaseModel):
-    """Pricing for specific stream and year within a contract"""
+    """Pricing for specific program, stream and year within a contract"""
     contract = models.ForeignKey(Contract, on_delete=models.CASCADE, related_name='stream_pricing')
+    program = models.ForeignKey(Program, on_delete=models.CASCADE, related_name='stream_pricing', default=1)
     stream = models.ForeignKey(Stream, on_delete=models.CASCADE, related_name='stream_pricing')
     year = models.PositiveIntegerField(help_text='Year for this pricing')
-    cost_per_student = models.DecimalField(max_digits=12, decimal_places=2, help_text='Cost per student for this stream/year')
-    oem_transfer_price = models.DecimalField(max_digits=12, decimal_places=2, help_text='OEM transfer price for this stream/year')
+    cost_per_student = models.DecimalField(max_digits=12, decimal_places=2, help_text='Cost per student for this program/stream/year')
+    oem_transfer_price = models.DecimalField(max_digits=12, decimal_places=2, help_text='OEM transfer price for this program/stream/year')
     tax_rate = models.ForeignKey(TaxRate, on_delete=models.SET_DEFAULT, default=0, related_name='stream_pricing')
 
     class Meta:
-        unique_together = ('contract', 'stream', 'year')
-        ordering = ['stream__name', 'year']
+        unique_together = ('contract', 'program', 'stream', 'year')
+        ordering = ['program__name', 'stream__name', 'year']
 
     def __str__(self):
-        return f'{self.contract.name} - {self.stream.name} ({self.year}): ₹{self.cost_per_student}'
+        return f'{self.contract.name} - {self.program.name}/{self.stream.name} ({self.year}): ₹{self.cost_per_student}'
 
     def clean(self):
         super().clean()
@@ -521,6 +525,11 @@ class ContractStreamPricing(BaseModel):
         if self.contract and self.stream:
             if self.stream.university != self.contract.university:
                 raise ValidationError(f"Stream {self.stream.name} must belong to the same university as the contract")
+        
+        # Validate program is associated with the contract
+        if self.contract and self.program:
+            if not self.contract.programs.filter(id=self.program.id).exists():
+                raise ValidationError(f"Program {self.program.name} must be associated with the contract")
 
 
 class ContractFile(BaseModel):
@@ -1081,6 +1090,221 @@ class ChannelPartnerStudent(BaseModel):
             self.student.save()
             
         super().save(*args, **kwargs)
+
+
+class OEMPayment(BaseModel):
+    """Model to track payments made to OEMs - creating a comprehensive ledger"""
+    
+    PAYMENT_TYPE_CHOICES = [
+        ('oem_transfer', 'OEM Transfer Payment'),
+        ('commission', 'Commission Payment'),
+        ('refund', 'Refund'),
+        ('adjustment', 'Adjustment'),
+        ('other', 'Other'),
+    ]
+    
+    PAYMENT_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    PAYMENT_METHOD_CHOICES = [
+        ('bank_transfer', 'Bank Transfer'),
+        ('upi', 'UPI'),
+        ('cheque', 'Cheque'),
+        ('cash', 'Cash'),
+        ('other', 'Other'),
+    ]
+    
+    # Core payment details
+    oem = models.ForeignKey(OEM, on_delete=models.CASCADE, related_name='payments')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_type = models.CharField(max_length=20, choices=PAYMENT_TYPE_CHOICES)
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES)
+    status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
+    
+    # Payment dates
+    payment_date = models.DateField()
+    processed_date = models.DateTimeField(null=True, blank=True)
+    
+    # Reference information
+    reference_number = models.CharField(max_length=255, blank=True, null=True, help_text="Transaction reference number")
+    description = models.TextField(blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    
+    # Related entities (optional - for tracking what triggered this payment)
+    billing = models.ForeignKey(Billing, on_delete=models.SET_NULL, null=True, blank=True, related_name='oem_payments')
+    batch = models.ForeignKey(Batch, on_delete=models.SET_NULL, null=True, blank=True, related_name='oem_payments')
+    contract = models.ForeignKey(Contract, on_delete=models.SET_NULL, null=True, blank=True, related_name='oem_payments')
+    
+    # Financial tracking
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00, help_text="Tax amount included in payment")
+    net_amount = models.DecimalField(max_digits=12, decimal_places=2, help_text="Net amount after tax")
+    
+    # Audit fields
+    created_by = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='created_oem_payments')
+    approved_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_oem_payments')
+    approved_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-payment_date', '-created_at']
+        indexes = [
+            models.Index(fields=['oem', 'payment_date']),
+            models.Index(fields=['status', 'payment_date']),
+            models.Index(fields=['payment_type', 'payment_date']),
+        ]
+    
+    def __str__(self):
+        return f'OEM Payment - {self.oem.name} - ₹{self.amount} - {self.payment_date}'
+    
+    def clean(self):
+        super().clean()
+        # Calculate net amount if not provided
+        if not self.net_amount:
+            self.net_amount = self.amount - self.tax_amount
+        
+        # Validate payment amount
+        if self.amount <= 0:
+            raise ValidationError("Payment amount must be greater than zero")
+        
+        # Validate tax amount doesn't exceed payment amount
+        if self.tax_amount > self.amount:
+            raise ValidationError("Tax amount cannot exceed payment amount")
+    
+    def save(self, *args, **kwargs):
+        # Auto-calculate net amount if not set
+        if not self.net_amount:
+            self.net_amount = self.amount - self.tax_amount
+        super().save(*args, **kwargs)
+    
+    def approve(self, approved_by_user):
+        """Approve the payment"""
+        from django.utils import timezone
+        
+        if self.status != 'pending':
+            raise ValidationError("Only pending payments can be approved")
+        
+        if not approved_by_user.is_superuser:
+            raise ValidationError("Only superusers can approve payments")
+        
+        self.status = 'processing'
+        self.approved_by = approved_by_user
+        self.approved_at = timezone.now()
+        self.save(update_fields=['status', 'approved_by', 'approved_at'])
+    
+    def mark_completed(self):
+        """Mark payment as completed"""
+        if self.status not in ['pending', 'processing']:
+            raise ValidationError("Only pending or processing payments can be marked as completed")
+        
+        from django.utils import timezone
+        self.status = 'completed'
+        self.processed_date = timezone.now()
+        self.save(update_fields=['status', 'processed_date'])
+    
+    def mark_failed(self, reason=None):
+        """Mark payment as failed"""
+        if self.status not in ['pending', 'processing']:
+            raise ValidationError("Only pending or processing payments can be marked as failed")
+        
+        self.status = 'failed'
+        if reason:
+            self.notes = f"{self.notes or ''}\nFailed: {reason}".strip()
+        self.save(update_fields=['status', 'notes'])
+
+
+class PaymentDocument(BaseModel):
+    """Documents related to OEM payments"""
+    payment = models.ForeignKey(OEMPayment, on_delete=models.CASCADE, related_name='documents')
+    file = models.FileField(upload_to='oem_payments/documents/')
+    document_type = models.CharField(max_length=50, choices=[
+        ('receipt', 'Receipt'),
+        ('invoice', 'Invoice'),
+        ('bank_statement', 'Bank Statement'),
+        ('approval', 'Approval Document'),
+        ('other', 'Other'),
+    ], default='other')
+    description = models.CharField(max_length=255, blank=True, null=True)
+    uploaded_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True)
+    
+    def __str__(self):
+        return f'Document for Payment {self.payment.id} - {self.document_type}'
+
+
+class PaymentLedger(BaseModel):
+    """Comprehensive ledger view of all financial transactions"""
+    
+    TRANSACTION_TYPE_CHOICES = [
+        ('income', 'Income'),
+        ('expense', 'Expense'),
+        ('oem_payment', 'OEM Payment'),
+        ('commission_payment', 'Commission Payment'),
+        ('refund', 'Refund'),
+        ('adjustment', 'Adjustment'),
+    ]
+    
+    # Transaction details
+    transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPE_CHOICES)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    transaction_date = models.DateField()
+    description = models.TextField()
+    
+    # Related entities
+    oem = models.ForeignKey(OEM, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
+    university = models.ForeignKey(University, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
+    billing = models.ForeignKey(Billing, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
+    payment = models.ForeignKey(OEMPayment, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
+    
+    # Balance tracking
+    running_balance = models.DecimalField(max_digits=12, decimal_places=2, help_text="Running balance after this transaction")
+    
+    # Reference
+    reference_number = models.CharField(max_length=255, blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    
+    class Meta:
+        ordering = ['-transaction_date', '-created_at']
+        indexes = [
+            models.Index(fields=['transaction_type', 'transaction_date']),
+            models.Index(fields=['oem', 'transaction_date']),
+            models.Index(fields=['university', 'transaction_date']),
+        ]
+    
+    def __str__(self):
+        return f'{self.transaction_type.title()} - ₹{self.amount} - {self.transaction_date}'
+    
+    @classmethod
+    def create_ledger_entry(cls, transaction_type, amount, transaction_date, description, 
+                          oem=None, university=None, billing=None, payment=None, 
+                          reference_number=None, notes=None):
+        """Create a new ledger entry and update running balance"""
+        # Get the last balance
+        last_entry = cls.objects.order_by('-transaction_date', '-created_at').first()
+        last_balance = last_entry.running_balance if last_entry else Decimal('0.00')
+        
+        # Calculate new balance
+        if transaction_type in ['income', 'refund']:
+            new_balance = last_balance + amount
+        else:  # expense, oem_payment, commission_payment, adjustment
+            new_balance = last_balance - amount
+        
+        # Create the ledger entry
+        return cls.objects.create(
+            transaction_type=transaction_type,
+            amount=amount,
+            transaction_date=transaction_date,
+            description=description,
+            oem=oem,
+            university=university,
+            billing=billing,
+            payment=payment,
+            reference_number=reference_number,
+            notes=notes,
+            running_balance=new_balance
+        )
 
 
 
