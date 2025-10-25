@@ -251,15 +251,70 @@ class PaymentDocumentSerializer(serializers.ModelSerializer):
 
 class PaymentSerializer(serializers.ModelSerializer):
     documents = PaymentDocumentSerializer(many=True, read_only=True)
+    invoice_details = serializers.SerializerMethodField()
+    billing_details = serializers.SerializerMethodField()
+    university_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Payment
         fields = [
-            'id', 'name', 'invoice', 'amount', 'payment_date',
-            'payment_method', 'status', 'transaction_reference',
+            'id', 'name', 'invoice', 'invoice_details', 'billing_details', 'university_name',
+            'amount', 'payment_date', 'payment_method', 'status', 'transaction_reference',
             'notes', 'documents', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
+
+    def get_invoice_details(self, obj):
+        """Get invoice details including billing information"""
+        try:
+            if obj.invoice:
+                return {
+                    'id': obj.invoice.id,
+                    'name': obj.invoice.name,
+                    'billing_id': obj.invoice.billing.id if hasattr(obj.invoice, 'billing') and obj.invoice.billing else None,
+                    'billing_name': obj.invoice.billing.name if hasattr(obj.invoice, 'billing') and obj.invoice.billing else None,
+                }
+        except Exception:
+            # Handle cases where relationships might be missing or data is incomplete
+            pass
+        return None
+
+    def get_billing_details(self, obj):
+        """Get billing details including university information"""
+        try:
+            if obj.invoice and obj.invoice.billing:
+                billing = obj.invoice.billing
+                # Get university from the first batch since all batches in a billing should belong to the same university
+                university = None
+                if hasattr(billing, 'batches') and billing.batches.exists():
+                    first_batch = billing.batches.first()
+                    university = first_batch.university if first_batch and hasattr(first_batch, 'university') else None
+                
+                return {
+                    'id': billing.id,
+                    'name': billing.name,
+                    'university_id': university.id if university else None,
+                    'university_name': university.name if university else None,
+                }
+        except Exception:
+            # Handle cases where relationships might be missing or data is incomplete
+            pass
+        return None
+
+    def get_university_name(self, obj):
+        """Get university name from the billing"""
+        try:
+            if obj.invoice and obj.invoice.billing:
+                billing = obj.invoice.billing
+                # Get university from the first batch since all batches in a billing should belong to the same university
+                if hasattr(billing, 'batches') and billing.batches.exists():
+                    first_batch = billing.batches.first()
+                    if first_batch and hasattr(first_batch, 'university') and first_batch.university:
+                        return first_batch.university.name
+        except Exception:
+            # Handle cases where relationships might be missing or data is incomplete
+            pass
+        return None
 
     def validate(self, data):
         if data['amount'] <= 0:
