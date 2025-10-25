@@ -10,6 +10,8 @@ from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.filters import OrderingFilter, SearchFilter
+from django_filters.rest_framework import DjangoFilterBackend
+from django.db import models
 from core.logger_service import get_logger
 from django.db.models import Q
 from decimal import Decimal
@@ -33,12 +35,13 @@ from .models import (
     OEM, Program, University, Stream, Contract, ContractProgram, Batch,
     Billing, Payment, ContractFile, TaxRate, CustomUser, Invoice, ChannelPartner,
     ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
-    UniversityEvent, Expense, StaffUniversityAssignment, ContractStreamPricing
+    UniversityEvent, Expense, StaffUniversityAssignment, ContractStreamPricing,
+    PaymentLedger
 )
 from .serializers import (
     OEMSerializer, ProgramSerializer, UniversitySerializer, StreamSerializer,
     ContractSerializer, ContractProgramSerializer, BatchSerializer, BillingSerializer,
-    PaymentSerializer, ContractFileSerializer, TaxRateSerializer, RegisterSerializer,
+    PaymentSerializer, PaymentLedgerSerializer, ContractFileSerializer, TaxRateSerializer, RegisterSerializer,
     UserSerializer, CustomTokenObtainPairSerializer, InvoiceSerializer, DashboardBillingSerializer,
     DashboardInvoiceSerializer, DashboardPaymentSerializer, ChannelPartnerSerializer,
     ChannelPartnerProgramSerializer, ChannelPartnerStudentSerializer, StudentSerializer,
@@ -939,6 +942,103 @@ class PaymentViewSet(viewsets.ModelViewSet):
     serializer_class = PaymentSerializer
     permission_classes = [IsAuthenticatedWithRoleBasedAccess]
 
+class PaymentLedgerViewSet(viewsets.ModelViewSet):
+    queryset = PaymentLedger.objects.all()
+    serializer_class = PaymentLedgerSerializer
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['university', 'transaction_type', 'oem']
+    search_fields = ['description', 'reference_number', 'notes']
+    ordering_fields = ['transaction_date', 'amount', 'created_at']
+    ordering = ['-transaction_date', '-created_at']
+    
+    def get_queryset(self):
+        """Filter by university and date range if provided"""
+        queryset = super().get_queryset()
+        
+        # Filter by university if provided
+        university_id = self.request.query_params.get('university')
+        if university_id:
+            queryset = queryset.filter(university_id=university_id)
+        
+        # Filter by date range if provided
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+        
+        if start_date:
+            queryset = queryset.filter(transaction_date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(transaction_date__lte=end_date)
+        
+        return queryset
+    
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """Get profit/loss summary for a university and date range"""
+        university_id = request.query_params.get('university')
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        
+        if not university_id:
+            return Response(
+                {'error': 'university parameter is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        queryset = self.get_queryset().filter(university_id=university_id)
+        
+        # Calculate totals by transaction type
+        income = queryset.filter(transaction_type='income').aggregate(
+            total=models.Sum('amount')
+        )['total'] or Decimal('0.00')
+        
+        expenses = queryset.filter(transaction_type='expense').aggregate(
+            total=models.Sum('amount')
+        )['total'] or Decimal('0.00')
+        
+        oem_payments = queryset.filter(transaction_type='oem_payment').aggregate(
+            total=models.Sum('amount')
+        )['total'] or Decimal('0.00')
+        
+        commission_payments = queryset.filter(transaction_type='commission_payment').aggregate(
+            total=models.Sum('amount')
+        )['total'] or Decimal('0.00')
+        
+        refunds = queryset.filter(transaction_type='refund').aggregate(
+            total=models.Sum('amount')
+        )['total'] or Decimal('0.00')
+        
+        adjustments = queryset.filter(transaction_type='adjustment').aggregate(
+            total=models.Sum('amount')
+        )['total'] or Decimal('0.00')
+        
+        # Calculate profit/loss
+        total_income = income + refunds
+        total_expenses = expenses + oem_payments + commission_payments + adjustments
+        profit_loss = total_income - total_expenses
+        
+        return Response({
+            'university_id': university_id,
+            'date_range': {
+                'start_date': start_date,
+                'end_date': end_date
+            },
+            'income': {
+                'payments_received': float(income),
+                'refunds': float(refunds),
+                'total': float(total_income)
+            },
+            'expenses': {
+                'operational_expenses': float(expenses),
+                'oem_payments': float(oem_payments),
+                'commission_payments': float(commission_payments),
+                'adjustments': float(adjustments),
+                'total': float(total_expenses)
+            },
+            'profit_loss': float(profit_loss),
+            'transaction_count': queryset.count()
+        })
+
 class ContractFileViewSet(viewsets.ModelViewSet):
     queryset = ContractFile.objects.all()
     serializer_class = ContractFileSerializer
@@ -1126,9 +1226,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             if actual_invoice:
                 data['actual_invoice'] = actual_invoice
 
-            # Convert amount to Decimal if it's a string
+            # Convert amount and amount_paid to Decimal if they're strings
             if 'amount' in data and isinstance(data['amount'], str):
                 data['amount'] = Decimal(data['amount'])
+            if 'amount_paid' in data and isinstance(data['amount_paid'], str):
+                data['amount_paid'] = Decimal(data['amount_paid'])
 
             serializer = self.get_serializer(data=data)
             serializer.is_valid(raise_exception=True)
@@ -1152,6 +1254,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 data['proforma_invoice'] = proforma_invoice
             if actual_invoice:
                 data['actual_invoice'] = actual_invoice
+
+            # Convert amount and amount_paid to Decimal if they're strings
+            if 'amount' in data and isinstance(data['amount'], str):
+                data['amount'] = Decimal(data['amount'])
+            if 'amount_paid' in data and isinstance(data['amount_paid'], str):
+                data['amount_paid'] = Decimal(data['amount_paid'])
 
             serializer = self.get_serializer(instance, data=data, partial=partial)
             serializer.is_valid(raise_exception=True)

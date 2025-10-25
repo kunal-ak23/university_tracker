@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     OEMViewSet, ProgramViewSet, UniversityViewSet, ContractViewSet,
-    BatchViewSet, BillingViewSet, PaymentViewSet, ContractFileViewSet,
+    BatchViewSet, BillingViewSet, PaymentViewSet, PaymentLedgerViewSet, ContractFileViewSet,
     StreamViewSet, TaxRateViewSet, LoginView, RegisterView, UserViewSet,
     InvoiceViewSet, DashboardViewSet, StudentViewSet, ChannelPartnerViewSet,
     ChannelPartnerProgramViewSet, ChannelPartnerStudentViewSet, ProgramBatchViewSet,
@@ -18,6 +18,7 @@ router.register(r'contracts', ContractViewSet)
 router.register(r'batches', BatchViewSet)
 router.register(r'billings', BillingViewSet)
 router.register(r'payments', PaymentViewSet)
+router.register(r'ledger', PaymentLedgerViewSet)
 router.register(r'contract-files', ContractFileViewSet)
 router.register(r'streams', StreamViewSet)
 router.register(r'tax-rates', TaxRateViewSet)

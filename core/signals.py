@@ -8,7 +8,7 @@ from django.core.exceptions import ValidationError
 from decimal import Decimal
 
 from core.logger_service import get_logger
-from core.models import ContractFile, Billing, Payment, Invoice, Contract
+from core.models import ContractFile, Billing, Payment, Invoice, Contract, PaymentLedger, Expense, OEMPayment
 from core.services import PaymentScheduleService
 
 logger = get_logger()
@@ -171,4 +171,75 @@ def create_payment_schedule(sender, instance, created, **kwargs):
             )
         except Exception as e:
             logger.error(f"Failed to create payment schedule: {str(e)}")
+
+@receiver(post_save, sender=Payment)
+def create_payment_ledger_entry(sender, instance, created, **kwargs):
+    """Create ledger entry when a payment is completed"""
+    if instance.status == 'completed':
+        try:
+            # Get university from the payment's invoice billing
+            university = None
+            if instance.invoice and instance.invoice.billing:
+                # Get university from the first batch in the billing
+                if instance.invoice.billing.batches.exists():
+                    first_batch = instance.invoice.billing.batches.first()
+                    university = first_batch.university if first_batch else None
+            
+            if university:
+                PaymentLedger.create_ledger_entry(
+                    transaction_type='income',
+                    amount=instance.amount,
+                    transaction_date=instance.payment_date,
+                    description=f"Payment received from {university.name} - {instance.name}",
+                    university=university,
+                    billing=instance.invoice.billing if instance.invoice else None,
+                    reference_number=instance.transaction_reference,
+                    notes=f"Payment method: {instance.payment_method}"
+                )
+        except Exception as e:
+            logger.error(f"Failed to create payment ledger entry: {str(e)}")
+
+@receiver(post_save, sender=Expense)
+def create_expense_ledger_entry(sender, instance, created, **kwargs):
+    """Create ledger entry when an expense is created"""
+    if created and instance.amount and instance.university:
+        try:
+            PaymentLedger.create_ledger_entry(
+                transaction_type='expense',
+                amount=instance.amount,
+                transaction_date=instance.incurred_date,
+                description=f"Expense - {instance.category}: {instance.description}",
+                university=instance.university,
+                reference_number=f"EXP-{instance.id}",
+                notes=f"Category: {instance.get_category_display()}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to create expense ledger entry: {str(e)}")
+
+@receiver(post_save, sender=OEMPayment)
+def create_oem_payment_ledger_entry(sender, instance, created, **kwargs):
+    """Create ledger entry when an OEM payment is made"""
+    if created and instance.status == 'completed':
+        try:
+            # Get university from the payment's billing if available
+            university = None
+            if instance.billing:
+                if instance.billing.batches.exists():
+                    first_batch = instance.billing.batches.first()
+                    university = first_batch.university if first_batch else None
+            
+            PaymentLedger.create_ledger_entry(
+                transaction_type='oem_payment',
+                amount=instance.amount,
+                transaction_date=instance.payment_date,
+                description=f"OEM Payment - {instance.payment_type}: {instance.description}",
+                oem=instance.oem,
+                university=university,
+                billing=instance.billing,
+                payment=instance,
+                reference_number=instance.reference_number,
+                notes=f"Payment method: {instance.payment_method}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to create OEM payment ledger entry: {str(e)}")
 

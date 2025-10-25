@@ -744,11 +744,13 @@ class Billing(BaseModel):
 
     def update_totals(self):
         """Update all total fields based on current data"""
+        from decimal import Decimal
+        
         # Calculate total amount from batch snapshots (including tax)
-        total = 0
+        total = Decimal('0')
         for snapshot in self.batch_snapshots.all():
-            tax_rate = snapshot.tax_rate if snapshot.tax_rate is not None else 0
-            total += snapshot.number_of_students * snapshot.cost_per_student * (1 + tax_rate/100)
+            tax_rate = snapshot.tax_rate if snapshot.tax_rate is not None else Decimal('0')
+            total += snapshot.number_of_students * snapshot.cost_per_student * (Decimal('1') + tax_rate/Decimal('100'))
         self.total_amount = total
 
         # Calculate total payments from invoices and payments
@@ -763,10 +765,10 @@ class Billing(BaseModel):
         self.balance_due = self.total_amount - self.total_payments
 
         # Calculate OEM transfer amount (including tax)
-        oem_total = 0
+        oem_total = Decimal('0')
         for snapshot in self.batch_snapshots.all():
-            tax_rate = snapshot.tax_rate if snapshot.tax_rate is not None else 0
-            oem_total += snapshot.number_of_students * snapshot.oem_transfer_price * (1 + tax_rate/100)
+            tax_rate = snapshot.tax_rate if snapshot.tax_rate is not None else Decimal('0')
+            oem_total += snapshot.number_of_students * snapshot.oem_transfer_price * (Decimal('1') + tax_rate/Decimal('100'))
         self.total_oem_transfer_amount = oem_total
 
         # Save without triggering update_totals again
@@ -850,8 +852,9 @@ class Payment(BaseModel):
     def clean(self):
         # Validate that payment amount doesn't exceed remaining invoice amount
         if self.invoice:
-            remaining_amount = self.invoice.amount - self.invoice.amount_paid
-            if self.amount > remaining_amount:
+            from decimal import Decimal
+            remaining_amount = Decimal(str(self.invoice.amount)) - Decimal(str(self.invoice.amount_paid))
+            if Decimal(str(self.amount)) > remaining_amount:
                 raise ValidationError(f"Payment amount ({self.amount}) exceeds remaining invoice amount ({remaining_amount})")
 
     def __str__(self):
@@ -1187,22 +1190,24 @@ class OEMPayment(BaseModel):
     
     def clean(self):
         super().clean()
+        from decimal import Decimal
         # Calculate net amount if not provided
         if not self.net_amount:
-            self.net_amount = self.amount - self.tax_amount
+            self.net_amount = Decimal(str(self.amount)) - Decimal(str(self.tax_amount))
         
         # Validate payment amount
-        if self.amount <= 0:
+        if Decimal(str(self.amount)) <= 0:
             raise ValidationError("Payment amount must be greater than zero")
         
         # Validate tax amount doesn't exceed payment amount
-        if self.tax_amount > self.amount:
+        if Decimal(str(self.tax_amount)) > Decimal(str(self.amount)):
             raise ValidationError("Tax amount cannot exceed payment amount")
     
     def save(self, *args, **kwargs):
         # Auto-calculate net amount if not set
         if not self.net_amount:
-            self.net_amount = self.amount - self.tax_amount
+            from decimal import Decimal
+            self.net_amount = Decimal(str(self.amount)) - Decimal(str(self.tax_amount))
         super().save(*args, **kwargs)
     
     def approve(self, approved_by_user):

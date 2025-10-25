@@ -14,7 +14,7 @@ from .models import (
     Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice,
     PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient,
     ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
-    UniversityEvent, Expense, StaffUniversityAssignment
+    UniversityEvent, Expense, StaffUniversityAssignment, PaymentLedger
 )
 
 # Base serializers for models without dependencies
@@ -249,6 +249,38 @@ class PaymentDocumentSerializer(serializers.ModelSerializer):
         fields = ['id', 'payment', 'file', 'description', 'uploaded_by', 'created_at', 'updated_at']
         read_only_fields = ['uploaded_by', 'created_at', 'updated_at']
 
+class PaymentLedgerSerializer(serializers.ModelSerializer):
+    university_name = serializers.SerializerMethodField()
+    oem_name = serializers.SerializerMethodField()
+    billing_name = serializers.SerializerMethodField()
+    payment_reference = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = PaymentLedger
+        fields = [
+            'id', 'transaction_type', 'amount', 'transaction_date', 'description',
+            'university', 'university_name', 'oem', 'oem_name', 'billing', 'billing_name',
+            'payment', 'payment_reference', 'running_balance', 'reference_number',
+            'notes', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'running_balance']
+    
+    def get_university_name(self, obj):
+        """Get university name safely"""
+        return obj.university.name if obj.university else None
+    
+    def get_oem_name(self, obj):
+        """Get OEM name safely"""
+        return obj.oem.name if obj.oem else None
+    
+    def get_billing_name(self, obj):
+        """Get billing name safely"""
+        return obj.billing.name if obj.billing else None
+    
+    def get_payment_reference(self, obj):
+        """Get payment reference safely"""
+        return obj.payment.reference_number if obj.payment else None
+
 class PaymentSerializer(serializers.ModelSerializer):
     documents = PaymentDocumentSerializer(many=True, read_only=True)
     invoice_details = serializers.SerializerMethodField()
@@ -321,9 +353,10 @@ class PaymentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Payment amount must be greater than zero")
         
         # Validate payment amount against remaining invoice amount
+        from decimal import Decimal
         invoice = data['invoice']
-        remaining_amount = invoice.amount - invoice.amount_paid
-        if data['amount'] > remaining_amount:
+        remaining_amount = Decimal(str(invoice.amount)) - Decimal(str(invoice.amount_paid))
+        if Decimal(str(data['amount'])) > remaining_amount:
             raise serializers.ValidationError(
                 f"Payment amount ({data['amount']}) exceeds remaining invoice amount ({remaining_amount})"
             )
@@ -345,7 +378,8 @@ class InvoiceSerializer(serializers.ModelSerializer):
         read_only_fields = ['status', 'amount_paid', 'created_at', 'updated_at']
 
     def get_remaining_amount(self, obj):
-        return obj.amount - obj.amount_paid
+        from decimal import Decimal
+        return Decimal(str(obj.amount)) - Decimal(str(obj.amount_paid))
 
 class BillingSerializer(serializers.ModelSerializer):
     total_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
