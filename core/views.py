@@ -644,7 +644,7 @@ class ContractViewSet(viewsets.ModelViewSet):
             )
             
             # Get the specific pricing
-            pricing = contract.get_stream_pricing(program_id, stream_id, int(year))
+            pricing = contract.get_stream_pricing(stream_id, int(year), program_id)
             if pricing:
                 return Response({
                     'cost_per_student': str(pricing.cost_per_student),
@@ -717,6 +717,67 @@ class BatchViewSet(viewsets.ModelViewSet):
         # Superusers can see all batches
         
         return queryset.select_related('university', 'stream').prefetch_related('snapshots')
+
+    @action(detail=False, methods=['get'])
+    def streams_with_contracts(self, request):
+        """Get streams that have contracts for a given university and year"""
+        university_id = request.query_params.get('university_id')
+        year = request.query_params.get('year')
+        
+        if not university_id or not year:
+            return Response(
+                {'error': 'university_id and year parameters are required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            year = int(year)
+        except ValueError:
+            return Response(
+                {'error': 'year must be a valid integer'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get streams that have contracts for this university and year
+        streams_with_contracts = Stream.objects.filter(
+            university_id=university_id,
+            stream_pricing__contract__university_id=university_id,
+            stream_pricing__contract__start_year__lte=year,
+            stream_pricing__contract__end_year__gte=year,
+            stream_pricing__year=year
+        ).distinct().values('id', 'name', 'duration', 'duration_unit', 'description')
+        
+        return Response(list(streams_with_contracts))
+
+    @action(detail=False, methods=['get'])
+    def programs_with_contracts(self, request):
+        """Get programs that have contracts for a given university and year"""
+        university_id = request.query_params.get('university_id')
+        year = request.query_params.get('year')
+        
+        if not university_id or not year:
+            return Response(
+                {'error': 'university_id and year parameters are required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            year = int(year)
+        except ValueError:
+            return Response(
+                {'error': 'year must be a valid integer'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get programs that have contracts for this university and year
+        programs_with_contracts = Program.objects.filter(
+            contracts__university_id=university_id,
+            contracts__start_year__lte=year,
+            contracts__end_year__gte=year,
+            contracts__stream_pricing__year=year
+        ).distinct().values('id', 'name', 'duration', 'duration_unit', 'description')
+        
+        return Response(list(programs_with_contracts))
 
 class BillingViewSet(viewsets.ModelViewSet):
     queryset = Billing.objects.all()

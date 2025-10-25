@@ -161,6 +161,8 @@ class BatchSnapshotSerializer(serializers.ModelSerializer):
 class BatchSerializer(serializers.ModelSerializer):
     university = serializers.SerializerMethodField()
     university_id = serializers.PrimaryKeyRelatedField(queryset=University.objects.all(), source='university', write_only=True)
+    program = serializers.SerializerMethodField()
+    program_id = serializers.PrimaryKeyRelatedField(queryset=Program.objects.all(), write_only=True)
     stream = serializers.SerializerMethodField()
     stream_id = serializers.PrimaryKeyRelatedField(queryset=Stream.objects.all(), source='stream', write_only=True)
     effective_cost_per_student = serializers.SerializerMethodField()
@@ -172,6 +174,17 @@ class BatchSerializer(serializers.ModelSerializer):
         """Get the university data safely, handling None values"""
         if obj.university:
             return UniversitySerializer(obj.university).data
+        return None
+
+    def get_program(self, obj):
+        """Get the program data from the contract, handling None values"""
+        try:
+            contract = obj.get_contract()
+            if contract and hasattr(contract, 'programs') and contract.programs.exists():
+                program = contract.programs.first()
+                return ProgramSerializer(program).data
+        except Exception:
+            pass
         return None
 
     def get_stream(self, obj):
@@ -195,10 +208,35 @@ class BatchSerializer(serializers.ModelSerializer):
         price = obj.get_oem_transfer_price()
         return price if price is not None else 0.00
 
+    def validate(self, data):
+        """Validate that a contract exists for the university/stream combination"""
+        university = data.get('university')
+        stream = data.get('stream')
+        start_year = data.get('start_year')
+        
+        if university and stream and start_year:
+            # Check if there's a contract for this university/stream/year combination
+            from .models import Contract
+            contract_exists = Contract.objects.filter(
+                university=university,
+                stream_pricing__stream=stream,
+                stream_pricing__year=start_year,
+                start_year__lte=start_year,
+                end_year__gte=start_year
+            ).exists()
+            
+            if not contract_exists:
+                raise serializers.ValidationError(
+                    f"No contract found for university '{university.name}' and stream '{stream.name}' for year {start_year}. "
+                    "Please create a contract first before creating a batch."
+                )
+        
+        return data
+
     class Meta:
         model = Batch
         fields = [
-            'id', 'name', 'university', 'university_id', 'stream', 'stream_id', 
+            'id', 'name', 'university', 'university_id', 'program', 'program_id', 'stream', 'stream_id', 
             'number_of_students', 'start_year', 'end_year', 'start_date', 'end_date',
             'effective_cost_per_student', 'effective_tax_rate', 'effective_oem_transfer_price',
             'status', 'notes', 'snapshots', 'created_at', 'updated_at'

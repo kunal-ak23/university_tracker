@@ -479,10 +479,14 @@ class Contract(BaseModel):
         if self.pk and not self.contract_files.exists():
             raise ValidationError("Contract must have at least one file.")
 
-    def get_stream_pricing(self, program, stream, year):
-        """Get pricing for a specific program, stream and year"""
+    def get_stream_pricing(self, stream, year, program=None):
+        """Get pricing for a specific stream and year, optionally filtered by program"""
         try:
-            return self.stream_pricing.get(program=program, stream=stream, year=year)
+            if program:
+                return self.stream_pricing.get(program=program, stream=stream, year=year)
+            else:
+                # If no program specified, get the first available pricing for this stream/year
+                return self.stream_pricing.filter(stream=stream, year=year).first()
         except ContractStreamPricing.DoesNotExist:
             return None
 
@@ -573,18 +577,39 @@ class Batch(BaseModel):
         # Validate that the stream belongs to the same university
         if self.stream.university != self.university:
             raise ValidationError(f"The stream '{self.stream}' must belong to the same university as the batch.")
-
-    def get_contract(self):
-        """Get the contract for this batch's university, stream, and year"""
-        try:
-            return Contract.objects.get(
+        
+        # Validate that a contract exists for this university/stream/year combination
+        if self.university and self.stream and self.start_year:
+            contract_exists = Contract.objects.filter(
                 university=self.university,
                 stream_pricing__stream=self.stream,
                 stream_pricing__year=self.start_year,
                 start_year__lte=self.start_year,
                 end_year__gte=self.start_year
-            )
-        except Contract.DoesNotExist:
+            ).exists()
+            
+            if not contract_exists:
+                raise ValidationError(
+                    f"No contract found for university '{self.university.name}' and stream '{self.stream.name}' for year {self.start_year}. "
+                    "Please create a contract first before creating a batch."
+                )
+
+    def get_contract(self):
+        """Get the contract for this batch's university, stream, and year"""
+        try:
+            contracts = Contract.objects.filter(
+                university=self.university,
+                stream_pricing__stream=self.stream,
+                stream_pricing__year=self.start_year,
+                start_year__lte=self.start_year,
+                end_year__gte=self.start_year
+            ).distinct()
+            
+            if contracts.exists():
+                # If multiple contracts exist, return the most recent one
+                return contracts.order_by('-created_at').first()
+            return None
+        except Exception:
             return None
 
     def get_cost_per_student(self):
