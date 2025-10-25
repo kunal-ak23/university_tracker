@@ -1038,6 +1038,26 @@ class PaymentLedgerViewSet(viewsets.ModelViewSet):
             'profit_loss': float(profit_loss),
             'transaction_count': queryset.count()
         })
+    
+    @action(detail=False, methods=['post'])
+    def recalculate_balances(self, request):
+        """Recalculate running balances for all or specific university"""
+        university_id = request.data.get('university_id')
+        
+        try:
+            updated_count = PaymentLedger.recalculate_running_balances(university_id=university_id)
+            
+            return Response({
+                'success': True,
+                'message': f'Successfully recalculated {updated_count} ledger entries',
+                'university_id': university_id,
+                'updated_count': updated_count
+            })
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to recalculate balances: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class ContractFileViewSet(viewsets.ModelViewSet):
     queryset = ContractFile.objects.all()

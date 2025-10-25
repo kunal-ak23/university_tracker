@@ -1307,34 +1307,78 @@ class PaymentLedger(BaseModel):
         return f'{self.transaction_type.title()} - ₹{self.amount} - {self.transaction_date}'
     
     @classmethod
+    def recalculate_running_balances(cls, university_id=None):
+        """Recalculate all running balances in chronological order"""
+        from decimal import Decimal
+        
+        # Get all entries ordered by transaction date and creation time
+        queryset = cls.objects.all()
+        if university_id:
+            queryset = queryset.filter(university_id=university_id)
+        
+        entries = queryset.order_by('transaction_date', 'created_at')
+        
+        running_balance = Decimal('0.00')
+        updated_count = 0
+        
+        for entry in entries:
+            # Calculate new balance based on transaction type
+            if entry.transaction_type in ['income', 'refund']:
+                running_balance += entry.amount
+            else:  # expense, oem_payment, commission_payment, adjustment
+                running_balance -= entry.amount
+            
+            # Update the entry with correct running balance
+            if entry.running_balance != running_balance:
+                entry.running_balance = running_balance
+                entry.save(update_fields=['running_balance'])
+                updated_count += 1
+        
+        return updated_count
+
+    @classmethod
     def create_ledger_entry(cls, transaction_type, amount, transaction_date, description, 
                           oem=None, university=None, billing=None, payment=None, 
                           reference_number=None, notes=None):
         """Create a new ledger entry and update running balance"""
-        # Get the last balance
-        last_entry = cls.objects.order_by('-transaction_date', '-created_at').first()
-        last_balance = last_entry.running_balance if last_entry else Decimal('0.00')
+        from django.db import transaction
         
-        # Calculate new balance
-        if transaction_type in ['income', 'refund']:
-            new_balance = last_balance + amount
-        else:  # expense, oem_payment, commission_payment, adjustment
-            new_balance = last_balance - amount
+        print(f"🔧 Creating ledger entry: {transaction_type} - ₹{amount} - {transaction_date}")
         
-        # Create the ledger entry
-        return cls.objects.create(
-            transaction_type=transaction_type,
-            amount=amount,
-            transaction_date=transaction_date,
-            description=description,
-            oem=oem,
-            university=university,
-            billing=billing,
-            payment=payment,
-            reference_number=reference_number,
-            notes=notes,
-            running_balance=new_balance
-        )
+        with transaction.atomic():
+            # Create the entry first with temporary balance
+            entry = cls.objects.create(
+                transaction_type=transaction_type,
+                amount=amount,
+                transaction_date=transaction_date,
+                description=description,
+                oem=oem,
+                university=university,
+                billing=billing,
+                payment=payment,
+                reference_number=reference_number,
+                notes=notes,
+                running_balance=Decimal('0.00')  # Temporary value
+            )
+            
+            print(f"🔧 Entry created with ID: {entry.id}")
+            
+            # Ensure the entry is saved and committed
+            entry.refresh_from_db()
+            
+            print(f"🔧 About to recalculate balances for university: {university.id if university else None}")
+            
+            # Recalculate all running balances to ensure accuracy
+            # Note: We recalculate ALL entries, not just for this university, to ensure consistency
+            updated_count = cls.recalculate_running_balances(university_id=None)
+            
+            print(f"🔧 Recalculation completed. Updated {updated_count} entries")
+            
+            # Refresh the entry to get the correct balance
+            entry.refresh_from_db()
+            print(f"🔧 Final entry balance: ₹{entry.running_balance}")
+            
+            return entry
 
 
 
