@@ -1343,8 +1343,6 @@ class PaymentLedger(BaseModel):
         """Create a new ledger entry and update running balance"""
         from django.db import transaction
         
-        print(f"🔧 Creating ledger entry: {transaction_type} - ₹{amount} - {transaction_date}")
-        
         with transaction.atomic():
             # Create the entry first with temporary balance
             entry = cls.objects.create(
@@ -1361,22 +1359,19 @@ class PaymentLedger(BaseModel):
                 running_balance=Decimal('0.00')  # Temporary value
             )
             
-            print(f"🔧 Entry created with ID: {entry.id}")
-            
             # Ensure the entry is saved and committed
             entry.refresh_from_db()
             
-            print(f"🔧 About to recalculate balances for university: {university.id if university else None}")
-            
             # Recalculate all running balances to ensure accuracy
-            # Note: We recalculate ALL entries, not just for this university, to ensure consistency
-            updated_count = cls.recalculate_running_balances(university_id=None)
-            
-            print(f"🔧 Recalculation completed. Updated {updated_count} entries")
+            # Note: This recalculates all entries for correctness, but may need optimization
+            # for production with large datasets. Consider:
+            # 1. Calculating only the current entry's balance based on the last entry
+            # 2. Adding a periodic background job to recalculate all entries
+            # 3. Only doing full recalculation when needed (backdated entries)
+            cls.recalculate_running_balances(university_id=None)
             
             # Refresh the entry to get the correct balance
             entry.refresh_from_db()
-            print(f"🔧 Final entry balance: ₹{entry.running_balance}")
             
             return entry
 
