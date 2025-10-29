@@ -559,6 +559,7 @@ class ContractProgram(BaseModel):
 
 class Batch(BaseModel):
     university = models.ForeignKey(University, on_delete=models.CASCADE, related_name='batches', null=True, blank=True)
+    program = models.ForeignKey(Program, on_delete=models.CASCADE, related_name='batches', null=True, blank=True)
     stream = models.ForeignKey(Stream, on_delete=models.CASCADE, related_name='batches')
     name = models.CharField(max_length=255)
     start_year = models.PositiveIntegerField(help_text='Start Year')
@@ -575,13 +576,14 @@ class Batch(BaseModel):
 
     def clean(self):
         # Validate that the stream belongs to the same university
-        if self.stream.university != self.university:
+        if self.stream and self.stream.university != self.university:
             raise ValidationError(f"The stream '{self.stream}' must belong to the same university as the batch.")
         
-        # Validate that a contract exists for this university/stream/year combination
-        if self.university and self.stream and self.start_year:
+        # Validate that a contract exists for this university/program/stream/year combination
+        if self.university and self.program and self.stream and self.start_year:
             contract_exists = Contract.objects.filter(
                 university=self.university,
+                stream_pricing__program=self.program,
                 stream_pricing__stream=self.stream,
                 stream_pricing__year=self.start_year,
                 start_year__lte=self.start_year,
@@ -590,15 +592,20 @@ class Batch(BaseModel):
             
             if not contract_exists:
                 raise ValidationError(
-                    f"No contract found for university '{self.university.name}' and stream '{self.stream.name}' for year {self.start_year}. "
+                    f"No contract found for university '{self.university.name}', program '{self.program.name}', and stream '{self.stream.name}' for year {self.start_year}. "
                     "Please create a contract first before creating a batch."
                 )
 
     def get_contract(self):
-        """Get the contract for this batch's university, stream, and year"""
+        """Get the contract for this batch's university, program, stream, and year"""
         try:
+            # If program is not set, return None (legacy batches)
+            if not self.program or not self.university or not self.stream or not self.start_year:
+                return None
+                
             contracts = Contract.objects.filter(
                 university=self.university,
+                stream_pricing__program=self.program,
                 stream_pricing__stream=self.stream,
                 stream_pricing__year=self.start_year,
                 start_year__lte=self.start_year,
@@ -616,7 +623,7 @@ class Batch(BaseModel):
         """Returns the cost per student from contract's stream pricing"""
         contract = self.get_contract()
         if contract:
-            pricing = contract.get_stream_pricing(self.stream, self.start_year)
+            pricing = contract.get_stream_pricing(self.stream, self.start_year, self.program)
             if pricing:
                 return pricing.cost_per_student
         return 0
@@ -625,7 +632,7 @@ class Batch(BaseModel):
         """Returns the tax rate from contract's stream pricing"""
         contract = self.get_contract()
         if contract:
-            pricing = contract.get_stream_pricing(self.stream, self.start_year)
+            pricing = contract.get_stream_pricing(self.stream, self.start_year, self.program)
             if pricing:
                 return pricing.tax_rate
         return None
@@ -634,7 +641,7 @@ class Batch(BaseModel):
         """Returns the OEM transfer price from contract's stream pricing"""
         contract = self.get_contract()
         if contract:
-            pricing = contract.get_stream_pricing(self.stream, self.start_year)
+            pricing = contract.get_stream_pricing(self.stream, self.start_year, self.program)
             if pricing:
                 return pricing.oem_transfer_price
         return 0
@@ -1100,9 +1107,21 @@ class ChannelPartnerStudent(BaseModel):
             # Get the channel partner program for this batch's program
             try:
                 if self.batch:
-                    program = self.batch.contract.programs.first()
+                    # Use batch's program directly if available
+                    if self.batch.program:
+                        program = self.batch.program
+                    else:
+                        # Fallback to contract's programs for legacy batches
+                        contract = self.batch.get_contract()
+                        if contract:
+                            program = contract.programs.first()
+                        else:
+                            raise ValidationError("Cannot determine program for this batch")
                 else:
                     program = self.program_batch.program
+                
+                if not program:
+                    raise ValidationError("No program available for pricing calculation")
                 
                 partner_program = ChannelPartnerProgram.objects.get(
                     channel_partner=self.channel_partner,
@@ -1110,8 +1129,8 @@ class ChannelPartnerStudent(BaseModel):
                 )
                 self.transfer_price = partner_program.transfer_price
                 self.commission_amount = self.transfer_price * (partner_program.get_effective_commission_rate() / 100)
-            except ChannelPartnerProgram.DoesNotExist:
-                raise ValidationError("No pricing found for this program and channel partner combination")
+            except (ChannelPartnerProgram.DoesNotExist, AttributeError, ValidationError) as e:
+                raise ValidationError(f"No pricing found for this program and channel partner combination: {str(e)}")
             
             # Update student's enrollment source
             self.student.enrollment_source = 'channel_partner'

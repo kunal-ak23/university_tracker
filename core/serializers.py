@@ -162,7 +162,7 @@ class BatchSerializer(serializers.ModelSerializer):
     university = serializers.SerializerMethodField()
     university_id = serializers.PrimaryKeyRelatedField(queryset=University.objects.all(), source='university', write_only=True)
     program = serializers.SerializerMethodField()
-    program_id = serializers.PrimaryKeyRelatedField(queryset=Program.objects.all(), write_only=True)
+    program_id = serializers.PrimaryKeyRelatedField(queryset=Program.objects.all(), source='program', write_only=True)
     stream = serializers.SerializerMethodField()
     stream_id = serializers.PrimaryKeyRelatedField(queryset=Stream.objects.all(), source='stream', write_only=True)
     effective_cost_per_student = serializers.SerializerMethodField()
@@ -177,14 +177,9 @@ class BatchSerializer(serializers.ModelSerializer):
         return None
 
     def get_program(self, obj):
-        """Get the program data from the contract, handling None values"""
-        try:
-            contract = obj.get_contract()
-            if contract and hasattr(contract, 'programs') and contract.programs.exists():
-                program = contract.programs.first()
-                return ProgramSerializer(program).data
-        except Exception:
-            pass
+        """Get the program data directly from the batch"""
+        if obj.program:
+            return ProgramSerializer(obj.program).data
         return None
 
     def get_stream(self, obj):
@@ -209,16 +204,18 @@ class BatchSerializer(serializers.ModelSerializer):
         return price if price is not None else 0.00
 
     def validate(self, data):
-        """Validate that a contract exists for the university/stream combination"""
+        """Validate that a contract exists for the university/program/stream combination"""
         university = data.get('university')
+        program = data.get('program')
         stream = data.get('stream')
         start_year = data.get('start_year')
         
-        if university and stream and start_year:
-            # Check if there's a contract for this university/stream/year combination
+        if university and program and stream and start_year:
+            # Check if there's a contract for this university/program/stream/year combination
             from .models import Contract
             contract_exists = Contract.objects.filter(
                 university=university,
+                stream_pricing__program=program,
                 stream_pricing__stream=stream,
                 stream_pricing__year=start_year,
                 start_year__lte=start_year,
@@ -227,7 +224,7 @@ class BatchSerializer(serializers.ModelSerializer):
             
             if not contract_exists:
                 raise serializers.ValidationError(
-                    f"No contract found for university '{university.name}' and stream '{stream.name}' for year {start_year}. "
+                    f"No contract found for university '{university.name}', program '{program.name}', and stream '{stream.name}' for year {start_year}. "
                     "Please create a contract first before creating a batch."
                 )
         
