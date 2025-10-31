@@ -36,7 +36,7 @@ from .models import (
     Billing, Payment, ContractFile, TaxRate, CustomUser, Invoice, ChannelPartner,
     ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
     UniversityEvent, Expense, StaffUniversityAssignment, ContractStreamPricing,
-    PaymentLedger
+    PaymentLedger, InvoiceOEMPayment, InvoiceTDS
 )
 from .serializers import (
     OEMSerializer, ProgramSerializer, UniversitySerializer, StreamSerializer,
@@ -47,7 +47,8 @@ from .serializers import (
     ChannelPartnerProgramSerializer, ChannelPartnerStudentSerializer, StudentSerializer,
     ProgramBatchSerializer, UniversityEventSerializer, UniversityEventApprovalSerializer,
     UniversityEventSubmissionSerializer, UniversityEventInviteeSerializer, ExpenseSerializer,
-    StaffUniversityAssignmentSerializer, UserManagementSerializer
+    StaffUniversityAssignmentSerializer, UserManagementSerializer, InvoiceOEMPaymentSerializer,
+    InvoiceTDSSerializer
 )
 from .permissions import IsAuthenticatedAndReadOnly, IsAuthenticatedWithRoleBasedAccess
 
@@ -1339,6 +1340,73 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 {"error": "Failed to upload actual invoice"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class InvoiceOEMPaymentViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing OEM payments at invoice level"""
+    queryset = InvoiceOEMPayment.objects.all()
+    serializer_class = InvoiceOEMPaymentSerializer
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter]
+    ordering_fields = ['payment_date', 'amount', 'status', 'created_at']
+    ordering = ['-payment_date', '-created_at']
+    filterset_fields = ['invoice', 'status', 'payment_method']
+    
+    def perform_create(self, serializer):
+        """Set created_by to current user"""
+        serializer.save(created_by=self.request.user)
+
+
+class InvoiceTDSViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing TDS entries at invoice level"""
+    queryset = InvoiceTDS.objects.all()
+    serializer_class = InvoiceTDSSerializer
+    permission_classes = [IsAuthenticatedWithRoleBasedAccess]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.DjangoFilterBackend, OrderingFilter]
+    ordering_fields = ['deduction_date', 'amount', 'tds_rate', 'created_at']
+    ordering = ['-deduction_date', '-created_at']
+    filterset_fields = ['invoice', 'certificate_type']
+    parser_classes = (MultiPartParser, FormParser)
+    
+    def create(self, request, *args, **kwargs):
+        """Handle file upload for TDS certificate"""
+        try:
+            data = request.data.dict() if hasattr(request.data, 'dict') else request.data
+            certificate_document = request.FILES.get('certificate_document')
+            
+            if certificate_document:
+                data['certificate_document'] = certificate_document
+            
+            serializer = self.get_serializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            headers = self.get_success_headers(serializer.data)
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        except Exception as e:
+            logger.error(f"Error creating TDS entry: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    def update(self, request, *args, **kwargs):
+        """Handle file upload for TDS certificate update"""
+        try:
+            partial = kwargs.pop('partial', False)
+            instance = self.get_object()
+            data = request.data.dict() if hasattr(request.data, 'dict') else request.data
+            
+            certificate_document = request.FILES.get('certificate_document')
+            if certificate_document:
+                data['certificate_document'] = certificate_document
+            
+            serializer = self.get_serializer(instance, data=data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            return Response(serializer.data)
+        except Exception as e:
+            logger.error(f"Error updating TDS entry: {str(e)}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]

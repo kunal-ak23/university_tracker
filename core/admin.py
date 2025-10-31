@@ -12,7 +12,7 @@ from .logger_service import get_logger
 from .models import Billing, Payment, OEM, Program, University, Stream, TaxRate, Contract, ContractProgram, ContractStreamPricing, Batch, \
     Invoice, ContractFile, CustomUser, BatchSnapshot, PaymentDocument, PaymentScheduleRecipient, PaymentSchedule, \
     ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch, UniversityEvent, Expense, \
-    StaffUniversityAssignment
+    StaffUniversityAssignment, InvoiceOEMPayment, InvoiceTDS
 
 
 logger = get_logger()
@@ -453,3 +453,30 @@ class ExpenseAdmin(admin.ModelAdmin):
         if request.user.is_provider_poc():
             return qs.filter(batch__contract__oem__poc=request.user)
         return qs.none()
+
+
+@admin.register(InvoiceOEMPayment)
+class InvoiceOEMPaymentAdmin(admin.ModelAdmin):
+    list_display = ['id', 'invoice', 'amount', 'payment_method', 'status', 'payment_date', 'created_by', 'created_at']
+    list_filter = ['status', 'payment_method', 'payment_date', 'created_at']
+    search_fields = ['invoice__name', 'reference_number', 'description', 'notes']
+    readonly_fields = ['created_at', 'updated_at', 'created_by']
+    fields = ['invoice', 'amount', 'payment_method', 'status', 'payment_date', 'processed_date',
+              'reference_number', 'description', 'notes', 'oem_payment', 'created_by',
+              'created_at', 'updated_at']
+    
+    def save_model(self, request, obj, form, change):
+        if not change:  # Creating new OEM payment
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(InvoiceTDS)
+class InvoiceTDSAdmin(admin.ModelAdmin):
+    list_display = ['id', 'invoice', 'amount', 'tds_rate', 'deduction_date', 'certificate_type', 'created_at']
+    list_filter = ['certificate_type', 'deduction_date', 'created_at']
+    search_fields = ['invoice__name', 'reference_number', 'description', 'notes']
+    readonly_fields = ['created_at', 'updated_at']
+    fields = ['invoice', 'amount', 'tds_rate', 'deduction_date', 'reference_number',
+              'certificate_type', 'certificate_document', 'description', 'notes',
+              'created_at', 'updated_at']

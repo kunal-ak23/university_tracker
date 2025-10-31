@@ -5,7 +5,7 @@ from .views import (
     OEMViewSet, ProgramViewSet, UniversityViewSet, ContractViewSet,
     BatchViewSet, BillingViewSet, PaymentViewSet, PaymentLedgerViewSet, ContractFileViewSet,
     StreamViewSet, TaxRateViewSet, LoginView, RegisterView, UserViewSet,
-    InvoiceViewSet, DashboardViewSet, StudentViewSet, ChannelPartnerViewSet,
+    InvoiceViewSet, InvoiceOEMPaymentViewSet, InvoiceTDSViewSet, DashboardViewSet, StudentViewSet, ChannelPartnerViewSet,
     ChannelPartnerProgramViewSet, ChannelPartnerStudentViewSet, ProgramBatchViewSet,
     UniversityEventViewSet, ExpenseViewSet, UserManagementViewSet, StaffUniversityAssignmentViewSet
 )
@@ -24,6 +24,8 @@ router.register(r'streams', StreamViewSet)
 router.register(r'tax-rates', TaxRateViewSet)
 router.register(r'users', UserViewSet)
 router.register(r'invoices', InvoiceViewSet)
+router.register(r'invoice-oem-payments', InvoiceOEMPaymentViewSet)
+router.register(r'invoice-tds', InvoiceTDSViewSet)
 router.register(r'dashboard', DashboardViewSet, basename='dashboard')
 router.register(r'students', StudentViewSet)
 router.register(r'channel-partners', ChannelPartnerViewSet)

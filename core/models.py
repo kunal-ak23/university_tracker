@@ -825,10 +825,19 @@ class Invoice(BaseModel):
     notes = models.TextField(blank=True, null=True)
 
     def update_status(self):
-        """Update invoice status based on payments"""
-        if self.amount_paid >= self.amount:
+        """Update invoice status based on payments and TDS"""
+        from decimal import Decimal
+        
+        total_tds = self.get_total_tds()
+        # Invoice is considered paid if: amount_paid + TDS >= invoice amount
+        # Because TDS is deducted at source, the university pays the full amount,
+        # but we only receive the net amount (amount - TDS)
+        total_paid_plus_tds = Decimal(str(self.amount_paid)) + total_tds
+        
+        if total_paid_plus_tds >= Decimal(str(self.amount)):
             self.status = 'paid'
-        elif self.amount_paid > 0:
+        elif self.amount_paid > 0 or total_tds > 0:
+            # Partially paid if there's any payment or TDS
             self.status = 'partially_paid'
         else:
             self.status = 'unpaid'
@@ -837,9 +846,256 @@ class Invoice(BaseModel):
         self.update_status()
         super().save(*args, **kwargs)
 
+    def get_oem(self):
+        """Get OEM from the invoice's billing contract"""
+        try:
+            if self.billing and self.billing.batches.exists():
+                # Try to get OEM from any batch's contract
+                for batch in self.billing.batches.all():
+                    contract = batch.get_contract() if batch else None
+                    if contract and contract.oem:
+                        return contract.oem
+        except Exception:
+            pass
+        return None
+    
+    def get_oem_transfer_amount(self):
+        """Calculate the OEM transfer amount for this invoice (proportional to invoice amount)"""
+        from decimal import Decimal
+        if not self.billing or self.billing.total_amount == 0:
+            return Decimal('0.00')
+        
+        # Calculate proportion: invoice_amount / billing_total_amount
+        proportion = Decimal(str(self.amount)) / Decimal(str(self.billing.total_amount))
+        # Multiply by total OEM transfer amount
+        oem_transfer = proportion * Decimal(str(self.billing.total_oem_transfer_amount))
+        return oem_transfer.quantize(Decimal('0.01'))
+    
+    def get_oem_transfer_paid(self):
+        """Get total OEM payments made for this invoice"""
+        from decimal import Decimal
+        return sum(
+            Decimal(str(payment.amount)) 
+            for payment in self.oem_payments.filter(status='completed')
+        )
+    
+    def get_oem_transfer_remaining(self):
+        """Get remaining OEM transfer amount for this invoice"""
+        return self.get_oem_transfer_amount() - self.get_oem_transfer_paid()
+    
+    def get_total_tds(self):
+        """Get total TDS amount for this invoice"""
+        from decimal import Decimal
+        return sum(Decimal(str(tds.amount)) for tds in self.tds_entries.all())
+    
+    def get_net_invoice_amount(self):
+        """
+        Get net invoice amount that will actually hit our account.
+        TDS is deducted at source by the university and paid directly to government,
+        so it never reaches our account.
+        Net Amount = Invoice Amount - Total TDS
+        """
+        from decimal import Decimal
+        return Decimal(str(self.amount)) - self.get_total_tds()
+    
+    def get_net_amount_received(self):
+        """
+        Get net amount actually received in our account.
+        
+        When TDS is deducted at source by the university:
+        - University pays the full invoice amount
+        - TDS is deducted at source and paid directly to government
+        - We only receive: (Invoice Amount - TDS) in our account
+        
+        Since amount_paid represents what actually hit our account (after TDS deduction),
+        net_amount_received = amount_paid
+        
+        Note: amount_paid tracks the actual money received in our bank account,
+        which is already net of TDS if TDS was deducted at source.
+        """
+        from decimal import Decimal
+        # amount_paid already represents what we received (after TDS deduction)
+        # So net_amount_received is simply the amount_paid
+        return Decimal(str(self.amount_paid))
+    
+    def get_net_remaining_amount(self):
+        """
+        Get remaining net amount to be received.
+        This is what's still outstanding after accounting for TDS deduction.
+        Net Remaining = Net Invoice Amount - Net Amount Received
+        """
+        return self.get_net_invoice_amount() - self.get_net_amount_received()
+    
     def __str__(self):
         return self.name
 
+
+class InvoiceOEMPayment(BaseModel):
+    """Track OEM payments at invoice level - allows clearing individual invoices"""
+    
+    PAYMENT_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+    
+    PAYMENT_METHOD_CHOICES = [
+        ('bank_transfer', 'Bank Transfer'),
+        ('upi', 'UPI'),
+        ('cheque', 'Cheque'),
+        ('cash', 'Cash'),
+        ('other', 'Other'),
+    ]
+    
+    # Core fields
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='oem_payments')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES)
+    status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='pending')
+    
+    # Dates
+    payment_date = models.DateField()
+    processed_date = models.DateTimeField(null=True, blank=True)
+    
+    # Reference information
+    reference_number = models.CharField(max_length=255, blank=True, null=True, help_text="Transaction reference number")
+    description = models.TextField(blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    
+    # Link to main OEMPayment for ledger tracking
+    oem_payment = models.ForeignKey(
+        'OEMPayment', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='invoice_oem_payments',
+        help_text="Linked OEMPayment entry for ledger tracking"
+    )
+    
+    # Audit fields
+    created_by = models.ForeignKey('CustomUser', on_delete=models.CASCADE, related_name='created_invoice_oem_payments')
+    
+    class Meta:
+        ordering = ['-payment_date', '-created_at']
+        indexes = [
+            models.Index(fields=['invoice', 'payment_date']),
+            models.Index(fields=['status', 'payment_date']),
+        ]
+    
+    def clean(self):
+        from decimal import Decimal
+        
+        # Validate invoice is paid before allowing OEM payment
+        if self.invoice.status != 'paid':
+            raise ValidationError(
+                f"OEM payment can only be made after invoice is paid. "
+                f"Current invoice status: {self.invoice.status}"
+            )
+        
+        # Validate amount doesn't exceed remaining OEM transfer amount
+        remaining = self.invoice.get_oem_transfer_remaining()
+        if Decimal(str(self.amount)) > remaining:
+            raise ValidationError(
+                f"OEM payment amount ({self.amount}) exceeds remaining OEM transfer amount ({remaining}). "
+                f"Total OEM transfer for invoice: {self.invoice.get_oem_transfer_amount()}, "
+                f"Already paid: {self.invoice.get_oem_transfer_paid()}"
+            )
+        
+        # Validate amount is positive
+        if Decimal(str(self.amount)) <= 0:
+            raise ValidationError("OEM payment amount must be greater than zero")
+    
+    def __str__(self):
+        return f'Invoice OEM Payment - {self.invoice.name} - ₹{self.amount} - {self.payment_date}'
+
+
+class InvoiceTDS(BaseModel):
+    """
+    Track TDS (Tax Deducted at Source) entries at invoice level.
+    
+    IMPORTANT: TDS amount NEVER hits our account. The university deducts TDS
+    at source and pays it directly to the government on our behalf. We can
+    only claim TDS back if:
+    - Our organization has no tax to be paid, OR
+    - There is a tax rebate
+    
+    The TDS is deducted BEFORE payment reaches us, so the net amount received
+    in our account is: Invoice Amount - TDS Amount
+    """
+    
+    TDS_CERTIFICATE_TYPE_CHOICES = [
+        ('form_16a', 'Form 16A'),
+        ('form_16b', 'Form 16B'),
+        ('certificate', 'TDS Certificate'),
+        ('other', 'Other'),
+    ]
+    
+    # Core fields
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='tds_entries')
+    amount = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        help_text="TDS amount deducted at source. IMPORTANT: This amount NEVER hits our account. "
+                  "University deducts TDS and pays it directly to government on our behalf. "
+                  "We can claim it back only if we have no tax liability or tax rebate."
+    )
+    tds_rate = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        help_text="TDS rate percentage (e.g., 10.00 for 10%)"
+    )
+    deduction_date = models.DateField(help_text="Date when TDS was deducted at source")
+    
+    # Reference information
+    reference_number = models.CharField(
+        max_length=255, 
+        blank=True, 
+        null=True, 
+        help_text="TDS certificate or form number"
+    )
+    certificate_type = models.CharField(
+        max_length=20, 
+        choices=TDS_CERTIFICATE_TYPE_CHOICES, 
+        blank=True, 
+        null=True,
+        help_text="Type of TDS certificate"
+    )
+    certificate_document = models.FileField(
+        upload_to='invoices/tds/', 
+        blank=True, 
+        null=True,
+        help_text="TDS certificate document"
+    )
+    description = models.TextField(blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    
+    class Meta:
+        ordering = ['-deduction_date', '-created_at']
+        indexes = [
+            models.Index(fields=['invoice', 'deduction_date']),
+        ]
+        verbose_name = 'Invoice TDS'
+        verbose_name_plural = 'Invoice TDS Entries'
+    
+    def clean(self):
+        from decimal import Decimal
+        
+        # Validate TDS amount is positive
+        if Decimal(str(self.amount)) <= 0:
+            raise ValidationError("TDS amount must be greater than zero")
+        
+        # Validate TDS rate is positive
+        if Decimal(str(self.tds_rate)) <= 0:
+            raise ValidationError("TDS rate must be greater than zero")
+        
+        # Validate TDS amount doesn't exceed invoice amount
+        if Decimal(str(self.amount)) > Decimal(str(self.invoice.amount)):
+            raise ValidationError(
+                f"TDS amount ({self.amount}) cannot exceed invoice amount ({self.invoice.amount})"
+            )
+    
+    def __str__(self):
+        return f'TDS - {self.invoice.name} - ₹{self.amount} - {self.deduction_date}'
 
 
 class Payment(BaseModel):
@@ -860,9 +1116,35 @@ class Payment(BaseModel):
         # Validate that payment amount doesn't exceed remaining invoice amount
         if self.invoice:
             from decimal import Decimal
+            
+            # Refresh invoice from database to get latest amount_paid
+            if self.invoice.pk:
+                self.invoice.refresh_from_db()
+            
+            # Get current remaining amount
             remaining_amount = Decimal(str(self.invoice.amount)) - Decimal(str(self.invoice.amount_paid))
-            if Decimal(str(self.amount)) > remaining_amount:
-                raise ValidationError(f"Payment amount ({self.amount}) exceeds remaining invoice amount ({remaining_amount})")
+            
+            # If this is an update, we need to account for the old payment amount
+            if self.pk:
+                try:
+                    # Get the old payment from database (not from self, which has new values)
+                    old_payment = Payment.objects.get(pk=self.pk)
+                    # If the old payment was completed, it's already included in amount_paid
+                    # So we need to add it back to the remaining amount for validation
+                    if old_payment.status == 'completed':
+                        remaining_amount += Decimal(str(old_payment.amount))
+                except Payment.DoesNotExist:
+                    # Payment doesn't exist yet, treat as new
+                    pass
+            
+            # Only validate if the payment is or will be completed
+            # If status is not completed, we don't need to check the amount limit
+            if self.status == 'completed':
+                if Decimal(str(self.amount)) > remaining_amount:
+                    raise ValidationError(
+                        f"Payment amount ({self.amount}) exceeds remaining invoice amount ({remaining_amount}). "
+                        f"Invoice amount: {self.invoice.amount}, Amount paid: {self.invoice.amount_paid}"
+                    )
 
     def __str__(self):
         return self.name
@@ -1184,6 +1466,7 @@ class OEMPayment(BaseModel):
     
     # Related entities (optional - for tracking what triggered this payment)
     billing = models.ForeignKey(Billing, on_delete=models.SET_NULL, null=True, blank=True, related_name='oem_payments')
+    invoice = models.ForeignKey('Invoice', on_delete=models.SET_NULL, null=True, blank=True, related_name='linked_oem_payments', help_text="Invoice this OEM payment is for")
     batch = models.ForeignKey(Batch, on_delete=models.SET_NULL, null=True, blank=True, related_name='oem_payments')
     contract = models.ForeignKey(Contract, on_delete=models.SET_NULL, null=True, blank=True, related_name='oem_payments')
     
@@ -1306,6 +1589,7 @@ class PaymentLedger(BaseModel):
     university = models.ForeignKey(University, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
     billing = models.ForeignKey(Billing, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
     payment = models.ForeignKey(OEMPayment, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
+    invoice = models.ForeignKey('Invoice', on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries', help_text="Invoice this ledger entry is related to")
     
     # Balance tracking
     running_balance = models.DecimalField(max_digits=12, decimal_places=2, help_text="Running balance after this transaction")
@@ -1358,6 +1642,7 @@ class PaymentLedger(BaseModel):
     @classmethod
     def create_ledger_entry(cls, transaction_type, amount, transaction_date, description, 
                           oem=None, university=None, billing=None, payment=None, 
+                          invoice=None,
                           reference_number=None, notes=None):
         """Create a new ledger entry and update running balance"""
         from django.db import transaction
@@ -1373,6 +1658,7 @@ class PaymentLedger(BaseModel):
                 university=university,
                 billing=billing,
                 payment=payment,
+                invoice=invoice,
                 reference_number=reference_number,
                 notes=notes,
                 running_balance=Decimal('0.00')  # Temporary value

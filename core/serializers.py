@@ -14,7 +14,7 @@ from .models import (
     Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice,
     PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient,
     ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
-    UniversityEvent, Expense, StaffUniversityAssignment, PaymentLedger
+    UniversityEvent, Expense, StaffUniversityAssignment, PaymentLedger, InvoiceOEMPayment, InvoiceTDS
 )
 
 # Base serializers for models without dependencies
@@ -352,17 +352,49 @@ class PaymentSerializer(serializers.ModelSerializer):
         # Validate payment amount against remaining invoice amount
         from decimal import Decimal
         invoice = data['invoice']
+        
+        # Refresh invoice from database to get latest amount_paid
+        invoice.refresh_from_db()
+        
+        # Get current remaining amount
         remaining_amount = Decimal(str(invoice.amount)) - Decimal(str(invoice.amount_paid))
-        if Decimal(str(data['amount'])) > remaining_amount:
-            raise serializers.ValidationError(
-                f"Payment amount ({data['amount']}) exceeds remaining invoice amount ({remaining_amount})"
-            )
+        
+        # If this is an update, we need to account for the old payment amount
+        if self.instance and self.instance.pk:
+            # Refresh the instance from database to get the old values
+            self.instance.refresh_from_db()
+            old_payment = self.instance
+            # If the old payment was completed, it's already included in amount_paid
+            # So we need to add it back to the remaining amount for validation
+            if old_payment.status == 'completed':
+                remaining_amount += Decimal(str(old_payment.amount))
+        
+        # Only validate if the payment is or will be completed
+        # If status is not completed, we don't need to check the amount limit
+        payment_status = data.get('status', self.instance.status if self.instance else 'pending')
+        if payment_status == 'completed':
+            if Decimal(str(data['amount'])) > remaining_amount:
+                raise serializers.ValidationError(
+                    f"Payment amount ({data['amount']}) exceeds remaining invoice amount ({remaining_amount}). "
+                    f"Invoice amount: {invoice.amount}, Amount paid: {invoice.amount_paid}"
+                )
+        
         return data
 
 class InvoiceSerializer(serializers.ModelSerializer):
     payments = PaymentSerializer(many=True, read_only=True)
     amount_paid = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     remaining_amount = serializers.SerializerMethodField()
+    oem_payments = serializers.SerializerMethodField()
+    tds_entries = serializers.SerializerMethodField()
+    oem_transfer_amount = serializers.SerializerMethodField()
+    oem_transfer_paid = serializers.SerializerMethodField()
+    oem_transfer_remaining = serializers.SerializerMethodField()
+    total_tds = serializers.SerializerMethodField()
+    # TDS-related fields to show net amounts (money that actually hits our account)
+    net_invoice_amount = serializers.SerializerMethodField()
+    net_amount_received = serializers.SerializerMethodField()
+    net_remaining_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = Invoice
@@ -370,6 +402,13 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'id', 'name', 'billing', 'issue_date', 'due_date', 'amount',
             'amount_paid', 'remaining_amount', 'status', 'notes',
             'proforma_invoice', 'actual_invoice', 'payments',
+            'oem_payments', 'tds_entries',
+            'oem_transfer_amount', 'oem_transfer_paid', 'oem_transfer_remaining',
+            'total_tds',
+            # Net amounts (accounting for TDS deduction at source)
+            'net_invoice_amount',  # Invoice amount - TDS (what will hit our account)
+            'net_amount_received',  # Amount actually received in our account
+            'net_remaining_amount',  # Remaining net amount to be received
             'created_at', 'updated_at'
         ]
         read_only_fields = ['status', 'amount_paid', 'created_at', 'updated_at']
@@ -377,6 +416,172 @@ class InvoiceSerializer(serializers.ModelSerializer):
     def get_remaining_amount(self, obj):
         from decimal import Decimal
         return Decimal(str(obj.amount)) - Decimal(str(obj.amount_paid))
+    
+    def get_oem_payments(self, obj):
+        """Get OEM payments for this invoice"""
+        # Avoid circular import by defining inline
+        from rest_framework import serializers as drf_serializers
+        class SimpleInvoiceOEMPaymentSerializer(drf_serializers.ModelSerializer):
+            class Meta:
+                model = InvoiceOEMPayment
+                fields = ['id', 'amount', 'payment_method', 'status', 'payment_date', 
+                         'reference_number', 'description', 'notes', 'created_at', 'updated_at']
+        return SimpleInvoiceOEMPaymentSerializer(obj.oem_payments.all(), many=True, context=self.context).data
+    
+    def get_tds_entries(self, obj):
+        """Get TDS entries for this invoice"""
+        # Avoid circular import by defining inline
+        from rest_framework import serializers as drf_serializers
+        class SimpleInvoiceTDSSerializer(drf_serializers.ModelSerializer):
+            tds_note = drf_serializers.SerializerMethodField()
+            
+            class Meta:
+                model = InvoiceTDS
+                fields = ['id', 'amount', 'tds_rate', 'deduction_date', 'reference_number',
+                         'certificate_type', 'certificate_document', 'description', 'notes',
+                         'tds_note', 'created_at', 'updated_at']
+            
+            def get_tds_note(self, obj):
+                return (
+                    "TDS is deducted at source by the university and paid directly to the government. "
+                    "This amount NEVER hits our account. We can claim TDS back only if our organization "
+                    "has no tax liability or if there is a tax rebate."
+                )
+        
+        return SimpleInvoiceTDSSerializer(obj.tds_entries.all(), many=True, context=self.context).data
+    
+    def get_oem_transfer_amount(self, obj):
+        """Get calculated OEM transfer amount for this invoice"""
+        return obj.get_oem_transfer_amount()
+    
+    def get_oem_transfer_paid(self, obj):
+        """Get total OEM payments made for this invoice"""
+        return obj.get_oem_transfer_paid()
+    
+    def get_oem_transfer_remaining(self, obj):
+        """Get remaining OEM transfer amount for this invoice"""
+        return obj.get_oem_transfer_remaining()
+    
+    def get_total_tds(self, obj):
+        """Get total TDS amount for this invoice"""
+        return obj.get_total_tds()
+    
+    def get_net_invoice_amount(self, obj):
+        """
+        Get net invoice amount that will actually hit our account.
+        TDS is deducted at source and paid directly to government, so it never reaches our account.
+        """
+        return obj.get_net_invoice_amount()
+    
+    def get_net_amount_received(self, obj):
+        """
+        Get net amount actually received in our account.
+        This excludes TDS which was deducted before payment reached us.
+        """
+        return obj.get_net_amount_received()
+    
+    def get_net_remaining_amount(self, obj):
+        """
+        Get remaining net amount to be received.
+        This is what's still outstanding after accounting for TDS deduction at source.
+        """
+        return obj.get_net_remaining_amount()
+
+
+class InvoiceOEMPaymentSerializer(serializers.ModelSerializer):
+    invoice_details = serializers.SerializerMethodField()
+    oem_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InvoiceOEMPayment
+        fields = [
+            'id', 'invoice', 'invoice_details', 'amount', 'payment_method',
+            'status', 'payment_date', 'processed_date', 'reference_number',
+            'description', 'notes', 'oem_payment', 'oem_name', 'created_by',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'invoice_details', 'oem_name', 'created_by']
+    
+    def get_invoice_details(self, obj):
+        """Get invoice basic details"""
+        if obj.invoice:
+            return {
+                'id': obj.invoice.id,
+                'name': obj.invoice.name,
+                'amount': obj.invoice.amount,
+                'status': obj.invoice.status,
+            }
+        return None
+    
+    def get_oem_name(self, obj):
+        """Get OEM name from invoice"""
+        if obj.invoice:
+            oem = obj.invoice.get_oem()
+            return oem.name if oem else None
+        return None
+    
+    def validate(self, data):
+        """Validate that invoice is paid before OEM payment"""
+        invoice = data.get('invoice') or (self.instance.invoice if self.instance else None)
+        if invoice:
+            # Refresh invoice to get latest status
+            invoice.refresh_from_db()
+            if invoice.status != 'paid':
+                raise serializers.ValidationError(
+                    f"OEM payment can only be made after invoice is paid. "
+                    f"Current invoice status: {invoice.status}"
+                )
+        return data
+
+
+class InvoiceTDSSerializer(serializers.ModelSerializer):
+    invoice_details = serializers.SerializerMethodField()
+    tds_note = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InvoiceTDS
+        fields = [
+            'id', 'invoice', 'invoice_details', 'amount', 'tds_rate',
+            'deduction_date', 'reference_number', 'certificate_type',
+            'certificate_document', 'description', 'notes', 'tds_note',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'invoice_details', 'tds_note']
+    
+    def get_tds_note(self, obj):
+        """
+        Returns a note explaining that TDS never hits our account.
+        This helps users understand that TDS is deducted at source.
+        """
+        return (
+            "TDS is deducted at source by the university and paid directly to the government. "
+            "This amount NEVER hits our account. We can claim TDS back only if our organization "
+            "has no tax liability or if there is a tax rebate."
+        )
+    
+    def get_invoice_details(self, obj):
+        """Get invoice basic details"""
+        if obj.invoice:
+            return {
+                'id': obj.invoice.id,
+                'name': obj.invoice.name,
+                'amount': obj.invoice.amount,
+                'status': obj.invoice.status,
+            }
+        return None
+    
+    def validate(self, data):
+        """Validate TDS amount doesn't exceed invoice amount"""
+        invoice = data.get('invoice') or (self.instance.invoice if self.instance else None)
+        if invoice and 'amount' in data:
+            # Refresh invoice to get latest amount
+            invoice.refresh_from_db()
+            from decimal import Decimal
+            if Decimal(str(data['amount'])) > Decimal(str(invoice.amount)):
+                raise serializers.ValidationError(
+                    f"TDS amount ({data['amount']}) cannot exceed invoice amount ({invoice.amount})"
+                )
+        return data
 
 class BillingSerializer(serializers.ModelSerializer):
     total_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
