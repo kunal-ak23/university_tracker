@@ -1379,6 +1379,13 @@ class InvoiceTDSViewSet(viewsets.ModelViewSet):
             if certificate_document:
                 data['certificate_document'] = certificate_document
             
+            # Ensure invoice ID is an integer if it's a string (common with FormData)
+            if 'invoice' in data and isinstance(data['invoice'], str):
+                try:
+                    data['invoice'] = int(data['invoice'])
+                except (ValueError, TypeError):
+                    pass  # Let serializer handle validation
+            
             serializer = self.get_serializer(data=data)
             serializer.is_valid(raise_exception=True)
             self.perform_create(serializer)

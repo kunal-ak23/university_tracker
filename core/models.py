@@ -19,6 +19,9 @@ class BaseModel(models.Model):
         abstract = True
 
     def save(self, *args, **kwargs):
+        # Pop skip_update if present (used by child classes like Invoice)
+        kwargs.pop('skip_update', None)
+        
         if self.pk:
             # Get current version and increment it
             current = self.__class__.objects.get(pk=self.pk)
@@ -595,6 +598,24 @@ class Batch(BaseModel):
                     f"No contract found for university '{self.university.name}', program '{self.program.name}', and stream '{self.stream.name}' for year {self.start_year}. "
                     "Please create a contract first before creating a batch."
                 )
+        
+        # Validate that a batch with the same university, stream, and start_year doesn't already exist
+        if self.university and self.stream and self.start_year:
+            existing_batch = Batch.objects.filter(
+                university=self.university,
+                stream=self.stream,
+                start_year=self.start_year
+            )
+            # Exclude current instance if updating
+            if self.pk:
+                existing_batch = existing_batch.exclude(pk=self.pk)
+            
+            if existing_batch.exists():
+                raise ValidationError(
+                    f"A batch already exists for university '{self.university.name}', "
+                    f"stream '{self.stream.name}', and year {self.start_year}. "
+                    "Please use a different year or stream."
+                )
 
     def get_contract(self):
         """Get the contract for this batch's university, program, stream, and year"""
@@ -828,7 +849,9 @@ class Invoice(BaseModel):
         """Update invoice status based on payments and TDS"""
         from decimal import Decimal
         
-        total_tds = self.get_total_tds()
+        # Only access relationships if invoice has a primary key (is saved)
+        total_tds = self.get_total_tds() if self.pk else Decimal('0.00')
+        
         # Invoice is considered paid if: amount_paid + TDS >= invoice amount
         # Because TDS is deducted at source, the university pays the full amount,
         # but we only receive the net amount (amount - TDS)
@@ -843,8 +866,21 @@ class Invoice(BaseModel):
             self.status = 'unpaid'
 
     def save(self, *args, **kwargs):
-        self.update_status()
+        # Skip status update flag (used internally to prevent recursion)
+        skip_update = kwargs.pop('skip_update', False)
+        
+        # Save first to ensure we have a primary key
         super().save(*args, **kwargs)
+        
+        # Update status after save (now we have pk and can access relationships)
+        if not skip_update:
+            old_status = self.status
+            self.update_status()
+            # Only save again if status changed
+            if old_status != self.status and 'update_fields' not in kwargs:
+                # Use update_fields to save only status, and skip update to prevent recursion
+                # Note: skip_update is popped from kwargs, so we don't pass it to parent
+                super().save(update_fields=['status'], skip_update=True)
 
     def get_oem(self):
         """Get OEM from the invoice's billing contract"""
@@ -874,6 +910,9 @@ class Invoice(BaseModel):
     def get_oem_transfer_paid(self):
         """Get total OEM payments made for this invoice"""
         from decimal import Decimal
+        # Only access relationship if invoice has a primary key (is saved)
+        if not self.pk:
+            return Decimal('0.00')
         return sum(
             Decimal(str(payment.amount)) 
             for payment in self.oem_payments.filter(status='completed')
@@ -886,6 +925,9 @@ class Invoice(BaseModel):
     def get_total_tds(self):
         """Get total TDS amount for this invoice"""
         from decimal import Decimal
+        # Only access relationship if invoice has a primary key (is saved)
+        if not self.pk:
+            return Decimal('0.00')
         return sum(Decimal(str(tds.amount)) for tds in self.tds_entries.all())
     
     def get_net_invoice_amount(self):

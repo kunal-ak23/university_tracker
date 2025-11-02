@@ -167,8 +167,27 @@ def create_payment_schedule(sender, instance, created, **kwargs):
     """Create payment schedule when invoice is created"""
     if created:
         try:
+            # Ensure invoice has a primary key before accessing relationships
+            if not instance.pk:
+                logger.warning(f"Invoice {instance.id if hasattr(instance, 'id') else 'unknown'} does not have a primary key yet, skipping payment schedule creation")
+                return
+            
             # Get recipients from the contract's POC and OEM contact
-            contract = instance.billing.batches.first().contract
+            # Add proper null checks to avoid AttributeError
+            if not instance.billing:
+                logger.warning(f"Invoice {instance.pk} has no billing, skipping payment schedule creation")
+                return
+            
+            first_batch = instance.billing.batches.first()
+            if not first_batch:
+                logger.warning(f"Invoice {instance.pk} billing has no batches, skipping payment schedule creation")
+                return
+            
+            contract = first_batch.get_contract()
+            if not contract or not contract.oem:
+                logger.warning(f"Invoice {instance.pk} has no contract or OEM, skipping payment schedule creation")
+                return
+            
             recipients = [
                 contract.oem.contact_email,
                 contract.oem.poc.email if contract.oem.poc else None
@@ -180,10 +199,10 @@ def create_payment_schedule(sender, instance, created, **kwargs):
                 invoice=instance,
                 amount=instance.amount,
                 due_date=instance.due_date,
-                reminder_recipients=reminder_recipients
+                reminder_recipients=reminder_recipients if reminder_recipients else None
             )
         except Exception as e:
-            logger.error(f"Failed to create payment schedule: {str(e)}")
+            logger.error(f"Failed to create payment schedule for invoice {instance.pk if hasattr(instance, 'pk') and instance.pk else 'unknown'}: {str(e)}", exc_info=True)
 
 @receiver(post_save, sender=Payment)
 def create_payment_ledger_entry(sender, instance, created, **kwargs):

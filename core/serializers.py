@@ -491,6 +491,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
 class InvoiceOEMPaymentSerializer(serializers.ModelSerializer):
     invoice_details = serializers.SerializerMethodField()
     oem_name = serializers.SerializerMethodField()
+    invoice = serializers.PrimaryKeyRelatedField(queryset=Invoice.objects.all())
 
     class Meta:
         model = InvoiceOEMPayment
@@ -524,9 +525,21 @@ class InvoiceOEMPaymentSerializer(serializers.ModelSerializer):
         """Validate that invoice is paid before OEM payment"""
         invoice = data.get('invoice') or (self.instance.invoice if self.instance else None)
         if invoice:
-            # Refresh invoice to get latest status
-            invoice.refresh_from_db()
-            if invoice.status != 'paid':
+            # If invoice is an instance, ensure it has a pk, otherwise get it from the database
+            if hasattr(invoice, 'pk') and invoice.pk:
+                invoice.refresh_from_db()
+            elif hasattr(invoice, 'id') and invoice.id:
+                # If it's an Invoice instance but not saved, get it from DB
+                from core.models import Invoice
+                invoice = Invoice.objects.get(pk=invoice.id)
+            else:
+                # If it's just an ID, fetch the invoice
+                from core.models import Invoice
+                invoice_id = invoice if isinstance(invoice, (int, str)) else None
+                if invoice_id:
+                    invoice = Invoice.objects.get(pk=invoice_id)
+            
+            if invoice and invoice.status != 'paid':
                 raise serializers.ValidationError(
                     f"OEM payment can only be made after invoice is paid. "
                     f"Current invoice status: {invoice.status}"
@@ -537,6 +550,7 @@ class InvoiceOEMPaymentSerializer(serializers.ModelSerializer):
 class InvoiceTDSSerializer(serializers.ModelSerializer):
     invoice_details = serializers.SerializerMethodField()
     tds_note = serializers.SerializerMethodField()
+    invoice = serializers.PrimaryKeyRelatedField(queryset=Invoice.objects.all())
 
     class Meta:
         model = InvoiceTDS
@@ -570,17 +584,38 @@ class InvoiceTDSSerializer(serializers.ModelSerializer):
             }
         return None
     
+    
     def validate(self, data):
         """Validate TDS amount doesn't exceed invoice amount"""
-        invoice = data.get('invoice') or (self.instance.invoice if self.instance else None)
-        if invoice and 'amount' in data:
-            # Refresh invoice to get latest amount
-            invoice.refresh_from_db()
-            from decimal import Decimal
-            if Decimal(str(data['amount'])) > Decimal(str(invoice.amount)):
-                raise serializers.ValidationError(
-                    f"TDS amount ({data['amount']}) cannot exceed invoice amount ({invoice.amount})"
-                )
+        invoice = data.get('invoice')
+        
+        # PrimaryKeyRelatedField should convert invoice ID to instance
+        # But let's ensure it's an instance, not an ID
+        if invoice:
+            # If it's an ID (int or str), fetch the invoice instance
+            if isinstance(invoice, (int, str)):
+                from core.models import Invoice
+                try:
+                    invoice = Invoice.objects.get(pk=int(invoice))
+                    data['invoice'] = invoice  # Update data with instance
+                except Invoice.DoesNotExist:
+                    raise serializers.ValidationError({
+                        'invoice': 'Invalid invoice ID'
+                    })
+            # If it's an instance but doesn't have pk yet, that's an error
+            elif hasattr(invoice, 'pk') and not invoice.pk:
+                raise serializers.ValidationError({
+                    'invoice': 'Invoice must be saved before creating TDS entry'
+                })
+            
+            # Now validate amount
+            if 'amount' in data:
+                from decimal import Decimal
+                if Decimal(str(data['amount'])) > Decimal(str(invoice.amount)):
+                    raise serializers.ValidationError({
+                        'amount': f"TDS amount ({data['amount']}) cannot exceed invoice amount ({invoice.amount})"
+                    })
+        
         return data
 
 class BillingSerializer(serializers.ModelSerializer):
