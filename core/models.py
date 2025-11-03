@@ -722,6 +722,16 @@ class Billing(BaseModel):
 
     def save(self, *args, **kwargs):
         skip_update = kwargs.pop('skip_update', False)
+        skip_validation = kwargs.pop('skip_validation', False)
+        
+        # Validate OEM consistency before saving (unless explicitly skipped)
+        if not skip_validation and self.pk:  # Only validate if billing exists (has batches)
+            try:
+                self.validate_oem_consistency()
+            except ValidationError:
+                # Re-raise validation errors
+                raise
+        
         super().save(*args, **kwargs)
         # Update totals after save
         if not skip_update:
@@ -769,6 +779,42 @@ class Billing(BaseModel):
     def can_modify_batches(self):
         """Check if batches can be modified based on status"""
         return self.status == 'draft'
+
+    def validate_oem_consistency(self):
+        """Validate that all batches in this billing belong to contracts with the same OEM"""
+        
+        if not self.batches.exists():
+            return  # No batches, no validation needed
+        
+        oems = set()
+        batches_without_oem = []
+        
+        for batch in self.batches.all():
+            contract = batch.get_contract()
+            if contract and contract.oem:
+                oems.add(contract.oem.id)
+            else:
+                batches_without_oem.append(batch.name)
+        
+        if batches_without_oem:
+            raise ValidationError(
+                f"The following batches do not have associated contracts with OEMs: {', '.join(batches_without_oem)}. "
+                f"All batches in a billing must have valid contracts with OEMs."
+            )
+        
+        if len(oems) > 1:
+            oem_names = []
+            for batch in self.batches.all():
+                contract = batch.get_contract()
+                if contract and contract.oem:
+                    oem_names.append(f"{batch.name} (OEM: {contract.oem.name})")
+            
+            raise ValidationError(
+                f"All batches in a billing must belong to contracts with the same OEM. "
+                f"This billing contains batches with different OEMs. "
+                f"Batches: {', '.join(oem_names)}. "
+                f"Please create separate billings for each OEM."
+            )
 
     def update_totals(self):
         """Update all total fields based on current data"""
@@ -1590,7 +1636,7 @@ class OEMPayment(BaseModel):
         self.save(update_fields=['status', 'notes'])
 
 
-class PaymentDocument(BaseModel):
+class OEMPaymentDocument(BaseModel):
     """Documents related to OEM payments"""
     payment = models.ForeignKey(OEMPayment, on_delete=models.CASCADE, related_name='documents')
     file = models.FileField(upload_to='oem_payments/documents/')

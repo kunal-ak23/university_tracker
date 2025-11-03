@@ -13,21 +13,12 @@ from rest_framework.filters import OrderingFilter, SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import models
 from core.logger_service import get_logger
-from django.db.models import Q
 from decimal import Decimal
 from datetime import datetime, timedelta
-from calendar import monthrange
 from django.utils import timezone
-from django.db.models import Sum, Count, Q
+from django.db.models import Sum, Q
 from django.db.models.functions import TruncMonth
-from django.contrib.auth import get_user_model
-from django.shortcuts import redirect
-from django.conf import settings
-from django.http import JsonResponse, HttpResponse
-from django.views.decorators.http import require_POST
-from django.views.decorators.csrf import csrf_exempt
-import requests
-import logging
+
 
 logger = get_logger()
 
@@ -890,6 +881,17 @@ class BillingViewSet(viewsets.ModelViewSet):
             
             # Add all operational batches to the billing
             billing.batches.set(operational_batches)
+            
+            # Validate OEM consistency
+            try:
+                billing.validate_oem_consistency()
+            except ValidationError as e:
+                # Delete the billing if validation fails
+                billing.delete()
+                return Response(
+                    {"error": str(e)},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             # Calculate totals
             billing.update_totals()

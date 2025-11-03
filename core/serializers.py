@@ -168,6 +168,7 @@ class BatchSerializer(serializers.ModelSerializer):
     effective_cost_per_student = serializers.SerializerMethodField()
     effective_tax_rate = serializers.SerializerMethodField()
     effective_oem_transfer_price = serializers.SerializerMethodField()
+    oem = serializers.SerializerMethodField()
     snapshots = BatchSnapshotSerializer(many=True, read_only=True)
 
     def get_university(self, obj):
@@ -203,6 +204,16 @@ class BatchSerializer(serializers.ModelSerializer):
         price = obj.get_oem_transfer_price()
         return price if price is not None else 0.00
 
+    def get_oem(self, obj):
+        """Get OEM from the batch's contract"""
+        try:
+            contract = obj.get_contract()
+            if contract and contract.oem:
+                return OEMSerializer(contract.oem).data
+        except Exception:
+            pass
+        return None
+
     def validate(self, data):
         """Validate that a contract exists for the university/program/stream combination"""
         university = data.get('university')
@@ -236,7 +247,7 @@ class BatchSerializer(serializers.ModelSerializer):
             'id', 'name', 'university', 'university_id', 'program', 'program_id', 'stream', 'stream_id', 
             'number_of_students', 'start_year', 'end_year', 'start_date', 'end_date',
             'effective_cost_per_student', 'effective_tax_rate', 'effective_oem_transfer_price',
-            'status', 'notes', 'snapshots', 'created_at', 'updated_at'
+            'oem', 'status', 'notes', 'snapshots', 'created_at', 'updated_at'
         ]
 
 
@@ -637,11 +648,37 @@ class BillingSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create billing with proper handling of 0 values"""
         try:
+            batches = validated_data.pop('batches', [])
             billing = super().create(validated_data)
+            
+            # Set batches after creation
+            if batches:
+                billing.batches.set(batches)
+                # Validate OEM consistency after batches are set
+                billing.validate_oem_consistency()
+            
             return billing
+        except ValidationError as e:
+            # Re-raise validation errors as-is
+            raise
         except Exception as e:
             logger.error(f"Error creating billing: {str(e)}")
             raise serializers.ValidationError(f"Failed to create billing: {str(e)}")
+    
+    def update(self, instance, validated_data):
+        """Update billing with OEM consistency validation"""
+        batches = validated_data.pop('batches', None)
+        
+        # Update other fields
+        billing = super().update(instance, validated_data)
+        
+        # Update batches if provided
+        if batches is not None:
+            billing.batches.set(batches)
+            # Validate OEM consistency after batches are updated
+            billing.validate_oem_consistency()
+        
+        return billing
 
 class PaymentScheduleRecipientSerializer(serializers.ModelSerializer):
     class Meta:
