@@ -107,14 +107,24 @@ class ContractSerializer(serializers.ModelSerializer):
 
     def get_streams(self, obj):
         """Get unique streams from stream_pricing"""
-        streams = obj.stream_pricing.values('stream_id', 'stream__name', 'stream__duration', 'stream__duration_unit', 'stream__description').distinct()
-        return [{
-            'id': stream['stream_id'],
-            'name': stream['stream__name'],
-            'duration': stream['stream__duration'],
-            'duration_unit': stream['stream__duration_unit'],
-            'description': stream['stream__description']
-        } for stream in streams]
+        streams_data = obj.stream_pricing.values('stream_id', 'stream__name', 'stream__duration', 'stream__duration_unit', 'stream__description').distinct()
+        
+        # Convert to list and deduplicate by stream_id to ensure uniqueness
+        seen_ids = set()
+        unique_streams = []
+        for stream in streams_data:
+            stream_id = stream['stream_id']
+            if stream_id not in seen_ids:
+                seen_ids.add(stream_id)
+                unique_streams.append({
+                    'id': stream_id,
+                    'name': stream['stream__name'],
+                    'duration': stream['stream__duration'],
+                    'duration_unit': stream['stream__duration_unit'],
+                    'description': stream['stream__description']
+                })
+        
+        return unique_streams
 
     class Meta:
         model = Contract
