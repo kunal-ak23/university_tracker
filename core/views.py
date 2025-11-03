@@ -960,7 +960,13 @@ class PaymentLedgerViewSet(viewsets.ModelViewSet):
         # Filter by university if provided
         university_id = self.request.query_params.get('university')
         if university_id:
-            queryset = queryset.filter(university_id=university_id)
+            # Ensure university_id is an integer
+            try:
+                university_id = int(university_id)
+                queryset = queryset.filter(university_id=university_id)
+            except (ValueError, TypeError):
+                # If it's not a valid integer, skip the filter (will return all results)
+                pass
         
         # Filter by date range if provided
         start_date = self.request.query_params.get('start_date')
@@ -983,6 +989,15 @@ class PaymentLedgerViewSet(viewsets.ModelViewSet):
         if not university_id:
             return Response(
                 {'error': 'university parameter is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Ensure university_id is an integer
+        try:
+            university_id = int(university_id)
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'university parameter must be a valid integer'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
         
