@@ -16,6 +16,8 @@ from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+LOG_DIR = BASE_DIR / 'logs'
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 load_dotenv(BASE_DIR / '.env')
 
@@ -171,16 +173,31 @@ AUTHENTICATION_BACKENDS = [
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        },
+    },
     'handlers': {
         'debug_file': {
             'level': 'DEBUG',
-            'class': 'logging.FileHandler',
-            'filename': os.path.join(BASE_DIR, 'debug.log'),
+            'class': 'logging.handlers.TimedRotatingFileHandler',
+            'filename': str(LOG_DIR / 'debug.log'),
+            'when': 'midnight',
+            'interval': 1,
+            'backupCount': 90,
+            'encoding': 'utf-8',
+            'formatter': 'verbose',
         },
         'info_file': {
             'level': 'INFO',
-            'class': 'logging.FileHandler',
-            'filename': os.path.join(BASE_DIR, 'info.log'),
+            'class': 'logging.handlers.TimedRotatingFileHandler',
+            'filename': str(LOG_DIR / 'info.log'),
+            'when': 'midnight',
+            'interval': 1,
+            'backupCount': 90,
+            'encoding': 'utf-8',
+            'formatter': 'verbose',
         },
     },
     'loggers': {
