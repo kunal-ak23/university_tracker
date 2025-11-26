@@ -14,7 +14,7 @@ from .models import (
     Billing, Payment, ContractFile, Stream, TaxRate, BatchSnapshot, Invoice,
     PaymentSchedule, PaymentReminder, PaymentDocument, PaymentScheduleRecipient,
     ChannelPartner, ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
-    UniversityEvent, Expense, StaffUniversityAssignment, PaymentLedger, InvoiceOEMPayment, InvoiceTDS
+    UniversityEvent, Expense, StaffUniversityAssignment, LedgerLine, InvoiceOEMPayment, InvoiceTDS
 )
 
 # Base serializers for models without dependencies
@@ -267,21 +267,21 @@ class PaymentDocumentSerializer(serializers.ModelSerializer):
         fields = ['id', 'payment', 'file', 'description', 'uploaded_by', 'created_at', 'updated_at']
         read_only_fields = ['uploaded_by', 'created_at', 'updated_at']
 
-class PaymentLedgerSerializer(serializers.ModelSerializer):
+class LedgerLineSerializer(serializers.ModelSerializer):
     university_name = serializers.SerializerMethodField()
     oem_name = serializers.SerializerMethodField()
     billing_name = serializers.SerializerMethodField()
     payment_reference = serializers.SerializerMethodField()
     
     class Meta:
-        model = PaymentLedger
+        model = LedgerLine
         fields = [
-            'id', 'transaction_type', 'amount', 'transaction_date', 'description',
+            'id', 'entry_date', 'account', 'entry_type', 'amount', 'memo',
             'university', 'university_name', 'oem', 'oem_name', 'billing', 'billing_name',
-            'payment', 'payment_reference', 'running_balance', 'reference_number',
-            'notes', 'created_at', 'updated_at'
+            'payment', 'payment_reference', 'oem_payment', 'expense',
+            'invoice', 'external_reference', 'reversing', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['created_at', 'updated_at', 'running_balance']
+        read_only_fields = ['created_at', 'updated_at']
     
     def get_university_name(self, obj):
         """Get university name safely"""
@@ -297,7 +297,7 @@ class PaymentLedgerSerializer(serializers.ModelSerializer):
     
     def get_payment_reference(self, obj):
         """Get payment reference safely"""
-        return obj.payment.reference_number if obj.payment else None
+        return obj.payment.transaction_reference if obj.payment else obj.external_reference
 
 class PaymentSerializer(serializers.ModelSerializer):
     documents = PaymentDocumentSerializer(many=True, read_only=True)
@@ -411,6 +411,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     oem_transfer_amount = serializers.SerializerMethodField()
     oem_transfer_paid = serializers.SerializerMethodField()
     oem_transfer_remaining = serializers.SerializerMethodField()
+    oem_overpayment_amount = serializers.SerializerMethodField()
     total_tds = serializers.SerializerMethodField()
     # TDS-related fields to show net amounts (money that actually hits our account)
     net_invoice_amount = serializers.SerializerMethodField()
@@ -425,6 +426,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'proforma_invoice', 'actual_invoice', 'payments',
             'oem_payments', 'tds_entries',
             'oem_transfer_amount', 'oem_transfer_paid', 'oem_transfer_remaining',
+            'oem_overpayment_amount',
             'total_tds',
             # Net amounts (accounting for TDS deduction at source)
             'net_invoice_amount',  # Invoice amount - TDS (what will hit our account)
@@ -482,6 +484,10 @@ class InvoiceSerializer(serializers.ModelSerializer):
     def get_oem_transfer_remaining(self, obj):
         """Get remaining OEM transfer amount for this invoice"""
         return obj.get_oem_transfer_remaining()
+    
+    def get_oem_overpayment_amount(self, obj):
+        """Get total amount paid above OEM transfer requirement"""
+        return obj.get_oem_overpayment_amount()
     
     def get_total_tds(self, obj):
         """Get total TDS amount for this invoice"""
@@ -644,6 +650,7 @@ class BillingSerializer(serializers.ModelSerializer):
     total_payments = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     balance_due = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     total_oem_transfer_amount = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    oem_overpayment_amount = serializers.SerializerMethodField()
     batch_snapshots = BatchSnapshotSerializer(many=True, read_only=True)
 
     class Meta:
@@ -651,9 +658,13 @@ class BillingSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'batches', 'batch_snapshots', 'notes', 'status',
             'total_amount', 'total_payments', 'balance_due',
-            'total_oem_transfer_amount', 'created_at', 'updated_at'
+            'total_oem_transfer_amount', 'oem_overpayment_amount',
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at', 'status']
+    
+    def get_oem_overpayment_amount(self, obj):
+        return obj.get_oem_overpayment_amount()
 
     def create(self, validated_data):
         """Create billing with proper handling of 0 values"""

@@ -873,6 +873,17 @@ class Billing(BaseModel):
         )
         self.update_totals()
         return snapshot
+    
+    def get_oem_overpayment_amount(self):
+        """Sum overpayment across all invoices in this billing"""
+        from decimal import Decimal
+        if not self.pk:
+            return Decimal('0.00')
+        total_overpaid = sum(
+            invoice.get_oem_overpayment_amount()
+            for invoice in self.invoices.all()
+        )
+        return total_overpaid
 
 
 class Invoice(BaseModel):
@@ -967,6 +978,12 @@ class Invoice(BaseModel):
     def get_oem_transfer_remaining(self):
         """Get remaining OEM transfer amount for this invoice"""
         return self.get_oem_transfer_amount() - self.get_oem_transfer_paid()
+    
+    def get_oem_overpayment_amount(self):
+        """Return amount overpaid to OEM compared to transfer requirement"""
+        from decimal import Decimal
+        overpaid = self.get_oem_transfer_paid() - self.get_oem_transfer_amount()
+        return overpaid if overpaid > Decimal('0.00') else Decimal('0.00')
     
     def get_total_tds(self):
         """Get total TDS amount for this invoice"""
@@ -1078,15 +1095,6 @@ class InvoiceOEMPayment(BaseModel):
             raise ValidationError(
                 f"OEM payment can only be made after invoice is paid. "
                 f"Current invoice status: {self.invoice.status}"
-            )
-        
-        # Validate amount doesn't exceed remaining OEM transfer amount
-        remaining = self.invoice.get_oem_transfer_remaining()
-        if Decimal(str(self.amount)) > remaining:
-            raise ValidationError(
-                f"OEM payment amount ({self.amount}) exceeds remaining OEM transfer amount ({remaining}). "
-                f"Total OEM transfer for invoice: {self.invoice.get_oem_transfer_amount()}, "
-                f"Already paid: {self.invoice.get_oem_transfer_paid()}"
             )
         
         # Validate amount is positive
@@ -1654,119 +1662,97 @@ class OEMPaymentDocument(BaseModel):
         return f'Document for Payment {self.payment.id} - {self.document_type}'
 
 
-class PaymentLedger(BaseModel):
-    """Comprehensive ledger view of all financial transactions"""
-    
-    TRANSACTION_TYPE_CHOICES = [
-        ('income', 'Income'),
-        ('expense', 'Expense'),
-        ('oem_payment', 'OEM Payment'),
-        ('commission_payment', 'Commission Payment'),
-        ('refund', 'Refund'),
-        ('adjustment', 'Adjustment'),
-    ]
-    
-    # Transaction details
-    transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPE_CHOICES)
-    amount = models.DecimalField(max_digits=12, decimal_places=2)
-    transaction_date = models.DateField()
-    description = models.TextField()
-    
-    # Related entities
-    oem = models.ForeignKey(OEM, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
-    university = models.ForeignKey(University, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
-    billing = models.ForeignKey(Billing, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
-    payment = models.ForeignKey(OEMPayment, on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries')
-    invoice = models.ForeignKey('Invoice', on_delete=models.SET_NULL, null=True, blank=True, related_name='ledger_entries', help_text="Invoice this ledger entry is related to")
-    
-    # Balance tracking
-    running_balance = models.DecimalField(max_digits=12, decimal_places=2, help_text="Running balance after this transaction")
-    
-    # Reference
-    reference_number = models.CharField(max_length=255, blank=True, null=True)
-    notes = models.TextField(blank=True, null=True)
-    
-    class Meta:
-        ordering = ['-transaction_date', '-created_at']
-        indexes = [
-            models.Index(fields=['transaction_type', 'transaction_date']),
-            models.Index(fields=['oem', 'transaction_date']),
-            models.Index(fields=['university', 'transaction_date']),
-        ]
-    
-    def __str__(self):
-        return f'{self.transaction_type.title()} - ₹{self.amount} - {self.transaction_date}'
-    
-    @classmethod
-    def recalculate_running_balances(cls, university_id=None):
-        """Recalculate all running balances in chronological order"""
-        from decimal import Decimal
-        
-        # Get all entries ordered by transaction date and creation time
-        queryset = cls.objects.all()
-        if university_id:
-            queryset = queryset.filter(university_id=university_id)
-        
-        entries = queryset.order_by('transaction_date', 'created_at')
-        
-        running_balance = Decimal('0.00')
-        updated_count = 0
-        
-        for entry in entries:
-            # Calculate new balance based on transaction type
-            if entry.transaction_type in ['income', 'refund']:
-                running_balance += entry.amount
-            else:  # expense, oem_payment, commission_payment, adjustment
-                running_balance -= entry.amount
-            
-            # Update the entry with correct running balance
-            if entry.running_balance != running_balance:
-                entry.running_balance = running_balance
-                entry.save(update_fields=['running_balance'])
-                updated_count += 1
-        
-        return updated_count
+class LedgerLine(BaseModel):
+    """Immutable double-entry ledger line tracked at the account level."""
 
-    @classmethod
-    def create_ledger_entry(cls, transaction_type, amount, transaction_date, description, 
-                          oem=None, university=None, billing=None, payment=None, 
-                          invoice=None,
-                          reference_number=None, notes=None):
-        """Create a new ledger entry and update running balance"""
-        from django.db import transaction
-        
-        with transaction.atomic():
-            # Create the entry first with temporary balance
-            entry = cls.objects.create(
-                transaction_type=transaction_type,
-                amount=amount,
-                transaction_date=transaction_date,
-                description=description,
-                oem=oem,
-                university=university,
-                billing=billing,
-                payment=payment,
-                invoice=invoice,
-                reference_number=reference_number,
-                notes=notes,
-                running_balance=Decimal('0.00')  # Temporary value
-            )
-            
-            # Ensure the entry is saved and committed
-            entry.refresh_from_db()
-            
-            # Recalculate all running balances to ensure accuracy
-            # Note: This recalculates all entries for correctness, but may need optimization
-            # for production with large datasets. Consider:
-            # 1. Calculating only the current entry's balance based on the last entry
-            # 2. Adding a periodic background job to recalculate all entries
-            # 3. Only doing full recalculation when needed (backdated entries)
-            cls.recalculate_running_balances(university_id=None)
-            
-            # Refresh the entry to get the correct balance
-            entry.refresh_from_db()
-            
-            return entry
+    class EntryType(models.TextChoices):
+        DEBIT = 'DEBIT', 'Debit'
+        CREDIT = 'CREDIT', 'Credit'
+
+    class Account(models.TextChoices):
+        CASH = 'cash', 'Cash'
+        ACCOUNTS_RECEIVABLE = 'accounts_receivable', 'Accounts Receivable'
+        OEM_PAYABLE = 'oem_payable', 'OEM Payable'
+        EXPENSE = 'expense', 'Expense'
+        COMMISSION_EXPENSE = 'commission_expense', 'Commission Expense'
+        REVENUE = 'revenue', 'Revenue'
+        TDS_PAYABLE = 'tds_payable', 'TDS Payable'
+
+    payment = models.ForeignKey(
+        'Payment',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ledger_lines'
+    )
+    oem_payment = models.ForeignKey(
+        'OEMPayment',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ledger_lines'
+    )
+    expense = models.ForeignKey(
+        'Expense',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ledger_lines'
+    )
+    invoice = models.ForeignKey(
+        'Invoice',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ledger_lines'
+    )
+    billing = models.ForeignKey(
+        'Billing',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ledger_lines'
+    )
+    university = models.ForeignKey(
+        'University',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ledger_lines'
+    )
+    oem = models.ForeignKey(
+        'OEM',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ledger_lines'
+    )
+    entry_date = models.DateField()
+    account = models.CharField(max_length=64, choices=Account.choices)
+    entry_type = models.CharField(max_length=6, choices=EntryType.choices)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    memo = models.TextField(blank=True, null=True)
+    external_reference = models.CharField(max_length=255, blank=True, null=True)
+    reversing = models.BooleanField(
+        default=False,
+        help_text="True when this line reverses the effect of a prior line."
+    )
+
+    class Meta:
+        ordering = ['created_at', 'id']
+        indexes = [
+            models.Index(fields=['account']),
+            models.Index(fields=['entry_date']),
+            models.Index(fields=['university', 'account']),
+            models.Index(fields=['university', 'entry_date']),
+            models.Index(fields=['payment']),
+            models.Index(fields=['oem_payment']),
+            models.Index(fields=['expense']),
+        ]
+
+    def __str__(self):
+        direction = '+' if self.entry_type == self.EntryType.DEBIT else '-'
+        return f'{self.get_account_display()} {direction}{self.amount} ({self.entry_type})'
 
 
 

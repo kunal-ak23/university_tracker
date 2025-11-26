@@ -9,10 +9,22 @@ from django.utils import timezone
 from decimal import Decimal
 
 from core.logger_service import get_logger
-from core.models import ContractFile, Billing, Payment, Invoice, Contract, PaymentLedger, Expense, OEMPayment, InvoiceOEMPayment, InvoiceTDS
-from core.services import PaymentScheduleService
+from core.models import ContractFile, Billing, Payment, Invoice, Contract, Expense, OEMPayment, InvoiceOEMPayment, InvoiceTDS
+from core.services import PaymentScheduleService, LedgerService
 
 logger = get_logger()
+
+
+@receiver(pre_save, sender=Expense)
+def track_expense_snapshot(sender, instance, **kwargs):
+    """Store previous expense for ledger diffing."""
+    if instance.pk:
+        try:
+            instance._ledger_previous_version = Expense.objects.get(pk=instance.pk)
+        except Expense.DoesNotExist:
+            instance._ledger_previous_version = None
+    else:
+        instance._ledger_previous_version = None
 
 @receiver(m2m_changed, sender=Billing.batches.through)
 def handle_billing_batches_changed(sender, instance, action, reverse, model, pk_set, **kwargs):
@@ -90,10 +102,13 @@ def track_payment_status_change(sender, instance, **kwargs):
         try:
             old_payment = Payment.objects.get(pk=instance.pk)
             instance._previous_status = old_payment.status
+            instance._ledger_previous_version = old_payment
         except Payment.DoesNotExist:
             instance._previous_status = None
+            instance._ledger_previous_version = None
     else:
         instance._previous_status = None
+        instance._ledger_previous_version = None
 
 @receiver(post_save, sender=Payment)
 def handle_payment_save(sender, instance, created, **kwargs):
@@ -162,6 +177,11 @@ def handle_payment_delete(sender, instance, **kwargs):
                 billing.status = 'active'
                 billing.save(skip_update=True)
 
+    try:
+        LedgerService.sync_payment(None, previous_version=instance)
+    except Exception as e:
+        logger.error(f"Failed to append reversing ledger lines for deleted payment {instance.id}: {str(e)}", exc_info=True)
+
 @receiver(post_save, sender=Invoice)
 def create_payment_schedule(sender, instance, created, **kwargs):
     """Create payment schedule when invoice is created"""
@@ -205,146 +225,29 @@ def create_payment_schedule(sender, instance, created, **kwargs):
             logger.error(f"Failed to create payment schedule for invoice {instance.pk if hasattr(instance, 'pk') and instance.pk else 'unknown'}: {str(e)}", exc_info=True)
 
 @receiver(post_save, sender=Payment)
-def create_payment_ledger_entry(sender, instance, created, **kwargs):
-    """Create or update ledger entry when a payment is completed"""
-    # Get old status to detect changes
-    old_status = getattr(instance, '_previous_status', None)
-    
-    # If payment status changed from 'completed' to something else, remove ledger entry
-    if old_status == 'completed' and instance.status != 'completed':
-        try:
-            # Get university and billing to find the ledger entry
-            university = None
-            billing = None
-            if instance.invoice and instance.invoice.billing:
-                billing = instance.invoice.billing
-                if billing.batches.exists():
-                    first_batch = billing.batches.first()
-                    university = first_batch.university if first_batch else None
-            
-            if university:
-                # Find and remove ledger entries for this payment
-                matching_entries = PaymentLedger.objects.filter(
-                    transaction_type='income',
-                    transaction_date=instance.payment_date,
-                    university=university,
-                    billing=billing,
-                    reference_number=instance.transaction_reference or ''
-                )
-                
-                if matching_entries.exists():
-                    # Remove the entries
-                    deleted_count = matching_entries.count()
-                    matching_entries.delete()
-                    # Recalculate running balances
-                    PaymentLedger.recalculate_running_balances(university_id=university.id if university else None)
-                    logger.info(f"Removed {deleted_count} ledger entry(ies) for payment {instance.id} (status changed from completed to {instance.status})")
-        except Exception as e:
-            logger.error(f"Failed to remove payment ledger entry: {str(e)}")
-        return  # Don't create/update anything if status is not completed
-    
-    # Only create/update ledger entry if payment is completed
-    if instance.status == 'completed':
-        should_create_entry = False
-        should_update_entry = False
-        
-        if created:
-            # New payment created with 'completed' status
-            should_create_entry = True
-        else:
-            # Check if status changed from non-completed to completed
-            # Use the _previous_status set in pre_save signal
-            old_status = getattr(instance, '_previous_status', None)
-            if old_status and old_status != 'completed':
-                should_create_entry = True
-            elif old_status == 'completed':
-                # Payment was already completed - check if we need to update ledger entry
-                # (e.g., amount, date, or other details changed)
-                should_update_entry = True
-        
-        try:
-            # Get university from the payment's invoice billing
-            university = None
-            billing = None
-            if instance.invoice and instance.invoice.billing:
-                billing = instance.invoice.billing
-                # Get university from the first batch in the billing
-                if billing.batches.exists():
-                    first_batch = billing.batches.first()
-                    university = first_batch.university if first_batch else None
-            
-            if university:
-                # Check if ledger entry already exists for this payment
-                # Look for entries matching date, university, billing, and reference
-                matching_entries = PaymentLedger.objects.filter(
-                    transaction_type='income',
-                    transaction_date=instance.payment_date,
-                    university=university,
-                    billing=billing,
-                    reference_number=instance.transaction_reference or ''
-                )
-                
-                # Check for exact match (correct amount)
-                exact_entry = matching_entries.filter(amount=instance.amount).first()
-                
-                # Check for entries with wrong amount (payment was updated)
-                wrong_amount_entries = matching_entries.exclude(amount=instance.amount)
-                
-                if exact_entry:
-                    # Perfect match exists - no action needed unless other details changed
-                    # Update description and notes in case they changed
-                    if (exact_entry.description != f"Payment received from {university.name} - {instance.name}" or
-                        exact_entry.notes != f"Payment method: {instance.payment_method}"):
-                        exact_entry.description = f"Payment received from {university.name} - {instance.name}"
-                        exact_entry.notes = f"Payment method: {instance.payment_method}"
-                        exact_entry.save()
-                elif wrong_amount_entries.exists() and (should_create_entry or should_update_entry):
-                    # Ledger entry exists but with wrong amount - update it
-                    wrong_entry = wrong_amount_entries.first()
-                    old_amount = wrong_entry.amount
-                    wrong_entry.amount = instance.amount
-                    wrong_entry.description = f"Payment received from {university.name} - {instance.name}"
-                    wrong_entry.notes = f"Payment method: {instance.payment_method}"
-                    wrong_entry.save()
-                    
-                    # Remove any duplicate entries
-                    if wrong_amount_entries.count() > 1:
-                        wrong_amount_entries.exclude(id=wrong_entry.id).delete()
-                    
-                    # Recalculate running balances since amount changed
-                    PaymentLedger.recalculate_running_balances(university_id=university.id if university else None)
-                    logger.info(f"Updated ledger entry {wrong_entry.id}: amount {old_amount} -> {instance.amount} for payment {instance.id}")
-                elif should_create_entry and not exact_entry:
-                    # No matching entry found - create new one
-                    PaymentLedger.create_ledger_entry(
-                        transaction_type='income',
-                        amount=instance.amount,
-                        transaction_date=instance.payment_date,
-                        description=f"Payment received from {university.name} - {instance.name}",
-                        university=university,
-                        billing=billing,
-                        reference_number=instance.transaction_reference,
-                        notes=f"Payment method: {instance.payment_method}"
-                    )
-        except Exception as e:
-            logger.error(f"Failed to create/update payment ledger entry: {str(e)}")
+def sync_payment_ledger_entry(sender, instance, **kwargs):
+    """Append ledger lines for payment changes."""
+    try:
+        LedgerService.sync_payment(instance, getattr(instance, '_ledger_previous_version', None))
+    except Exception as e:
+        logger.error(f"Failed to sync ledger for payment {instance.id}: {str(e)}", exc_info=True)
 
 @receiver(post_save, sender=Expense)
-def create_expense_ledger_entry(sender, instance, created, **kwargs):
-    """Create ledger entry when an expense is created"""
-    if created and instance.amount and instance.university:
-        try:
-            PaymentLedger.create_ledger_entry(
-                transaction_type='expense',
-                amount=instance.amount,
-                transaction_date=instance.incurred_date,
-                description=f"Expense - {instance.category}: {instance.description}",
-                university=instance.university,
-                reference_number=f"EXP-{instance.id}",
-                notes=f"Category: {instance.get_category_display()}"
-            )
-        except Exception as e:
-            logger.error(f"Failed to create expense ledger entry: {str(e)}")
+def sync_expense_ledger_entry(sender, instance, **kwargs):
+    """Append ledger lines for any expense change."""
+    try:
+        LedgerService.sync_expense(instance, getattr(instance, '_ledger_previous_version', None))
+    except Exception as e:
+        logger.error(f"Failed to sync ledger for expense {instance.id}: {str(e)}", exc_info=True)
+
+
+@receiver(post_delete, sender=Expense)
+def reverse_expense_ledger_entry(sender, instance, **kwargs):
+    """Append reversing entries when an expense is deleted."""
+    try:
+        LedgerService.sync_expense(None, previous_version=instance)
+    except Exception as e:
+        logger.error(f"Failed to append reversing ledger lines for expense {instance.id}: {str(e)}", exc_info=True)
 
 @receiver(pre_save, sender=OEMPayment)
 def track_oem_payment_status_change(sender, instance, **kwargs):
@@ -354,114 +257,35 @@ def track_oem_payment_status_change(sender, instance, **kwargs):
             old_payment = OEMPayment.objects.get(pk=instance.pk)
             instance._previous_status = old_payment.status
             instance._previous_amount = old_payment.amount
+            instance._ledger_previous_version = old_payment
         except OEMPayment.DoesNotExist:
             instance._previous_status = None
             instance._previous_amount = None
+            instance._ledger_previous_version = None
     else:
         instance._previous_status = None
         instance._previous_amount = None
+        instance._ledger_previous_version = None
 
 
 @receiver(post_save, sender=OEMPayment)
-def create_oem_payment_ledger_entry(sender, instance, created, **kwargs):
+def sync_oem_payment_ledger_entry(sender, instance, **kwargs):
     """
-    Create or update ledger entry when an OEM payment is made.
-    OEM payments are tracked as expenses in the ledger (reduce balance).
+    Append ledger lines when an OEM payment is completed or reversed.
     """
-    old_status = getattr(instance, '_previous_status', None)
-    old_amount = getattr(instance, '_previous_amount', None)
-    
-    logger.info(f"OEMPayment signal fired: id={instance.id}, status={instance.status}, created={created}")
-    
-    # Only create/update ledger entry when status is 'completed'
-    if instance.status == 'completed':
-        try:
-            # Get university from the payment's billing or invoice if available
-            university = None
-            if instance.billing:
-                if instance.billing.batches.exists():
-                    first_batch = instance.billing.batches.first()
-                    university = first_batch.university if first_batch else None
-            elif instance.invoice:
-                # Get university from invoice billing
-                if instance.invoice.billing and instance.invoice.billing.batches.exists():
-                    first_batch = instance.invoice.billing.batches.first()
-                    university = first_batch.university if first_batch else None
-            
-            if not university:
-                logger.warning(f"No university found for OEMPayment {instance.id} - billing={instance.billing_id}, invoice={instance.invoice_id}")
-            
-            # Check if ledger entry already exists
-            existing_entry = PaymentLedger.objects.filter(
-                transaction_type='oem_payment',
-                payment=instance,
-                invoice=instance.invoice
-            ).first()
-            
-            if existing_entry:
-                logger.info(f"Updating existing ledger entry {existing_entry.id} for OEMPayment {instance.id}")
-                # Update existing ledger entry
-                if (existing_entry.amount != instance.amount or 
-                    existing_entry.transaction_date != instance.payment_date or
-                    old_status != 'completed'):
-                    existing_entry.amount = instance.amount
-                    existing_entry.transaction_date = instance.payment_date
-                    existing_entry.description = f"OEM Payment - {instance.payment_type}: {instance.description or 'N/A'}"
-                    existing_entry.reference_number = instance.reference_number
-                    existing_entry.notes = f"Payment method: {instance.payment_method}"
-                    existing_entry.save()
-                    # Recalculate balances
-                    PaymentLedger.recalculate_running_balances(university_id=university.id if university else None)
-            else:
-                logger.info(f"Creating new ledger entry for OEMPayment {instance.id} - amount={instance.amount}, university={university}")
-                # Create new ledger entry
-                ledger_entry = PaymentLedger.create_ledger_entry(
-                    transaction_type='oem_payment',
-                    amount=instance.amount,
-                    transaction_date=instance.payment_date,
-                    description=f"OEM Payment - {instance.payment_type}: {instance.description or 'N/A'}",
-                    oem=instance.oem,
-                    university=university,
-                    billing=instance.billing,
-                    payment=instance,
-                    invoice=instance.invoice,
-                    reference_number=instance.reference_number,
-                    notes=f"Payment method: {instance.payment_method}"
-                )
-                logger.info(f"Created ledger entry {ledger_entry.id} for OEMPayment {instance.id}")
-        except Exception as e:
-            logger.error(f"Failed to create/update OEM payment ledger entry for OEMPayment {instance.id}: {str(e)}", exc_info=True)
-    elif old_status == 'completed' and instance.status != 'completed':
-        # Status changed from completed to something else - remove ledger entry
-        try:
-            ledger_entries = PaymentLedger.objects.filter(
-                transaction_type='oem_payment',
-                payment=instance,
-                invoice=instance.invoice
-            )
-            
-            if ledger_entries.exists():
-                university_id = None
-                if instance.invoice and instance.invoice.billing:
-                    if instance.invoice.billing.batches.exists():
-                        first_batch = instance.invoice.billing.batches.first()
-                        university_id = first_batch.university.id if first_batch and first_batch.university else None
-                elif instance.billing:
-                    if instance.billing.batches.exists():
-                        first_batch = instance.billing.batches.first()
-                        university_id = first_batch.university.id if first_batch and first_batch.university else None
-                
-                ledger_entries.delete()
-                
-                # Recalculate balances
-                if university_id:
-                    PaymentLedger.recalculate_running_balances(university_id=university_id)
-                else:
-                    PaymentLedger.recalculate_running_balances()
-        except Exception as e:
-            logger.error(f"Failed to remove OEM payment ledger entry: {str(e)}")
+    try:
+        LedgerService.sync_oem_payment(instance, getattr(instance, '_ledger_previous_version', None))
+    except Exception as e:
+        logger.error(f"Failed to sync ledger for OEM payment {instance.id}: {str(e)}", exc_info=True)
 
 
+@receiver(post_delete, sender=OEMPayment)
+def reverse_oem_payment_ledger_entry(sender, instance, **kwargs):
+    """Append reversing entries when an OEM payment is deleted."""
+    try:
+        LedgerService.sync_oem_payment(None, previous_version=instance)
+    except Exception as e:
+        logger.error(f"Failed to append reversing ledger lines for OEM payment {instance.id}: {str(e)}", exc_info=True)
 @receiver(pre_save, sender=InvoiceOEMPayment)
 def track_invoice_oem_payment_status_change(sender, instance, **kwargs):
     """Track InvoiceOEMPayment status before save to detect changes"""
@@ -481,82 +305,53 @@ def track_invoice_oem_payment_status_change(sender, instance, **kwargs):
 @receiver(post_save, sender=InvoiceOEMPayment)
 def create_invoice_oem_payment_entry(sender, instance, created, **kwargs):
     """
-    Create/update OEMPayment entry when InvoiceOEMPayment status changes.
-    OEM payments are tracked as expenses in the ledger (reduce balance).
+    Create or update OEMPayment rows when InvoiceOEMPayment status changes.
     """
     old_status = getattr(instance, '_previous_status', None)
-    
-    # Only create/update OEMPayment entry when status is 'completed'
+
     if instance.status == 'completed':
         try:
             invoice = instance.invoice
-            oem = invoice.get_oem()
-            
+            oem = invoice.get_oem() if hasattr(invoice, 'get_oem') else None
+
+            if not oem and invoice.billing:
+                for batch in invoice.billing.batches.all():
+                    contract = batch.get_contract() if batch else None
+                    if contract and contract.oem:
+                        oem = contract.oem
+                        logger.info(f"Found OEM {oem.id} for invoice {invoice.id} via batch {batch.id}")
+                        break
+
             if not oem:
-                # Try alternative methods to find OEM
-                # Check if billing has batches with contracts
-                if invoice.billing:
-                    for batch in invoice.billing.batches.all():
-                        contract = batch.get_contract() if batch else None
-                        if contract and contract.oem:
-                            oem = contract.oem
-                            logger.info(f"Found OEM {oem.id} for invoice {invoice.id} via batch {batch.id}")
-                            break
-                
-                if not oem:
-                    logger.warning(f"Cannot create OEMPayment: No OEM found for invoice {invoice.id}. Cannot create ledger entry without OEM.")
-                    return
-            
-            # Get university for ledger entry
-            university = None
-            if invoice.billing and invoice.billing.batches.exists():
-                first_batch = invoice.billing.batches.first()
-                university = first_batch.university if first_batch else None
-            
-            # Check if OEMPayment already exists for this InvoiceOEMPayment
+                logger.warning(f"Cannot create OEMPayment: No OEM found for invoice {invoice.id}.")
+                return
+
             if instance.oem_payment:
-                # Update existing OEMPayment entry
                 from decimal import Decimal
+
                 oem_payment = instance.oem_payment
-                old_amount = oem_payment.amount
                 oem_payment.amount = instance.amount
-                oem_payment.net_amount = Decimal(str(instance.amount)) - Decimal(str(oem_payment.tax_amount or 0))
+                oem_payment.net_amount = Decimal(str(instance.amount)) - Decimal(
+                    str(oem_payment.tax_amount or 0)
+                )
                 oem_payment.payment_date = instance.payment_date
                 oem_payment.payment_method = instance.payment_method
                 oem_payment.reference_number = instance.reference_number
-                oem_payment.description = instance.description or f"OEM Payment for Invoice {invoice.name}"
+                oem_payment.description = (
+                    instance.description or f"OEM Payment for Invoice {invoice.name}"
+                )
                 oem_payment.notes = instance.notes
                 oem_payment.status = 'completed'
                 oem_payment.invoice = invoice
                 oem_payment.billing = invoice.billing
                 oem_payment.clean()
                 oem_payment.save()
-                
-                # Update ledger entry if amount changed or if it didn't exist before
-                if old_status != 'completed' or old_amount != instance.amount:
-                    # Find and update ledger entry
-                    ledger_entry = PaymentLedger.objects.filter(
-                        transaction_type='oem_payment',
-                        payment=oem_payment,
-                        invoice=invoice
-                    ).first()
-                    
-                    if ledger_entry:
-                        ledger_entry.amount = instance.amount
-                        ledger_entry.transaction_date = instance.payment_date
-                        ledger_entry.description = f"OEM Payment - oem_transfer: {oem_payment.description}"
-                        ledger_entry.reference_number = instance.reference_number
-                        ledger_entry.notes = f"Payment method: {instance.payment_method}"
-                        ledger_entry.save()
-                        # Recalculate balances
-                        PaymentLedger.recalculate_running_balances(university_id=university.id if university else None)
             else:
-                # Create new OEMPayment entry
                 from decimal import Decimal
+
                 with transaction.atomic():
-                    # Calculate net_amount (amount - tax_amount, where tax_amount defaults to 0)
                     net_amount = Decimal(str(instance.amount)) - Decimal('0.00')
-                    
+
                     oem_payment = OEMPayment(
                         oem=oem,
                         amount=instance.amount,
@@ -572,48 +367,31 @@ def create_invoice_oem_payment_entry(sender, instance, created, **kwargs):
                         notes=instance.notes,
                         billing=invoice.billing,
                         invoice=invoice,
-                        created_by=instance.created_by
+                        created_by=instance.created_by,
                     )
-                    # Call clean() to validate and set any missing fields
                     oem_payment.clean()
                     oem_payment.save()
-                    
-                    # Link InvoiceOEMPayment to OEMPayment
+
                     instance.oem_payment = oem_payment
                     instance.save(update_fields=['oem_payment'])
-                
-                # The OEMPayment signal will create the ledger entry automatically
-                logger.info(f"Created OEMPayment {oem_payment.id} from InvoiceOEMPayment {instance.id} - signal should fire")
-            
+
         except Exception as e:
-            logger.error(f"Failed to create OEMPayment entry for InvoiceOEMPayment {instance.id}: {str(e)}", exc_info=True)
-    elif old_status == 'completed' and instance.status != 'completed':
-        # Status changed from completed to something else - remove ledger entry
+            logger.error(
+                f"Failed to create OEMPayment entry for InvoiceOEMPayment {instance.id}: {str(e)}",
+                exc_info=True,
+            )
+    elif old_status == 'completed' and instance.status != 'completed' and instance.oem_payment:
         try:
-            if instance.oem_payment:
-                # Find and remove ledger entry
-                ledger_entries = PaymentLedger.objects.filter(
-                    transaction_type='oem_payment',
-                    payment=instance.oem_payment,
-                    invoice=instance.invoice
-                )
-                
-                if ledger_entries.exists():
-                    university_id = None
-                    if instance.invoice and instance.invoice.billing:
-                        if instance.invoice.billing.batches.exists():
-                            first_batch = instance.invoice.billing.batches.first()
-                            university_id = first_batch.university.id if first_batch and first_batch.university else None
-                    
-                    ledger_entries.delete()
-                    
-                    # Recalculate balances
-                    if university_id:
-                        PaymentLedger.recalculate_running_balances(university_id=university_id)
-                    else:
-                        PaymentLedger.recalculate_running_balances()
+            oem_payment = instance.oem_payment
+            oem_payment.status = instance.status
+            note = f"Status updated to {instance.status} via Invoice OEM payment {instance.id}"
+            oem_payment.notes = f"{oem_payment.notes or ''}\n{note}".strip()
+            oem_payment.save(update_fields=['status', 'notes'])
         except Exception as e:
-            logger.error(f"Failed to remove OEM payment ledger entry: {str(e)}")
+            logger.error(
+                f"Failed to sync OEMPayment {instance.oem_payment_id} after InvoiceOEMPayment update: {str(e)}",
+                exc_info=True,
+            )
 
 
 @receiver(post_save, sender=InvoiceTDS)

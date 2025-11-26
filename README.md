@@ -106,6 +106,18 @@ This system manages the complex relationships between Universities, OEMs (course
    - Payment
    - TaxRate
 
+### Ledger & Rebuild Command
+
+- Financial activity is persisted in an append-only `ledger_lines` table that stores debit/credit pairs per account.
+- Updates or deletions never mutate historical rows; instead, reversing entries are appended automatically.
+- To regenerate ledger history (e.g., after fixing legacy data), run:
+
+```bash
+python manage.py rebuild_ledger           # Truncate and replay historical data
+python manage.py rebuild_ledger --dry-run # Preview counts without changing data
+python manage.py rebuild_ledger --truncate-only # Clear the ledger without replaying
+```
+
 ## Installation
 
 ```bash

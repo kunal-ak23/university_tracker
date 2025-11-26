@@ -27,12 +27,12 @@ from .models import (
     Billing, Payment, ContractFile, TaxRate, CustomUser, Invoice, ChannelPartner,
     ChannelPartnerProgram, ChannelPartnerStudent, Student, ProgramBatch,
     UniversityEvent, Expense, StaffUniversityAssignment, ContractStreamPricing,
-    PaymentLedger, InvoiceOEMPayment, InvoiceTDS
+    LedgerLine, InvoiceOEMPayment, InvoiceTDS
 )
 from .serializers import (
     OEMSerializer, ProgramSerializer, UniversitySerializer, StreamSerializer,
     ContractSerializer, ContractProgramSerializer, BatchSerializer, BillingSerializer,
-    PaymentSerializer, PaymentLedgerSerializer, ContractFileSerializer, TaxRateSerializer, RegisterSerializer,
+    PaymentSerializer, LedgerLineSerializer, ContractFileSerializer, TaxRateSerializer, RegisterSerializer,
     UserSerializer, CustomTokenObtainPairSerializer, InvoiceSerializer, DashboardBillingSerializer,
     DashboardInvoiceSerializer, DashboardPaymentSerializer, ChannelPartnerSerializer,
     ChannelPartnerProgramSerializer, ChannelPartnerStudentSerializer, StudentSerializer,
@@ -946,38 +946,44 @@ class PaymentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedWithRoleBasedAccess]
 
 class PaymentLedgerViewSet(viewsets.ModelViewSet):
-    queryset = PaymentLedger.objects.all()
-    serializer_class = PaymentLedgerSerializer
+    queryset = LedgerLine.objects.select_related(
+        'payment', 'oem_payment', 'expense', 'university', 'oem', 'billing'
+    )
+    serializer_class = LedgerLineSerializer
     permission_classes = [IsAuthenticatedWithRoleBasedAccess]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['university', 'transaction_type', 'oem']
-    search_fields = ['description', 'reference_number', 'notes']
-    ordering_fields = ['transaction_date', 'amount', 'created_at']
-    ordering = ['-transaction_date', '-created_at']
+    filterset_fields = ['university', 'account', 'entry_type', 'oem', 'reversing', 'payment', 'oem_payment', 'expense']
+    search_fields = ['memo', 'external_reference']
+    ordering_fields = ['entry_date', 'created_at', 'amount']
+    ordering = ['-entry_date', '-created_at']
     
     def get_queryset(self):
-        """Filter by university and date range if provided"""
+        """Filter by university, source type, and date range if provided"""
         queryset = super().get_queryset()
-        
-        # Filter by university if provided
+
         university_id = self.request.query_params.get('university')
         if university_id:
-            # Ensure university_id is an integer
             try:
                 university_id = int(university_id)
                 queryset = queryset.filter(university_id=university_id)
             except (ValueError, TypeError):
-                # If it's not a valid integer, skip the filter (will return all results)
                 pass
         
-        # Filter by date range if provided
+        source = self.request.query_params.get('source')
+        if source == 'payments':
+            queryset = queryset.filter(payment__isnull=False)
+        elif source == 'expenses':
+            queryset = queryset.filter(expense__isnull=False)
+        elif source == 'oem_payments':
+            queryset = queryset.filter(oem_payment__isnull=False)
+        
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
         
         if start_date:
-            queryset = queryset.filter(transaction_date__gte=start_date)
+            queryset = queryset.filter(entry_date__gte=start_date)
         if end_date:
-            queryset = queryset.filter(transaction_date__lte=end_date)
+            queryset = queryset.filter(entry_date__lte=end_date)
         
         return queryset
     
@@ -1005,35 +1011,32 @@ class PaymentLedgerViewSet(viewsets.ModelViewSet):
         
         queryset = self.get_queryset().filter(university_id=university_id)
         
-        # Calculate totals by transaction type
-        income = queryset.filter(transaction_type='income').aggregate(
-            total=models.Sum('amount')
-        )['total'] or Decimal('0.00')
+        payments_received = queryset.filter(
+            account=LedgerLine.Account.CASH,
+            entry_type=LedgerLine.EntryType.DEBIT,
+            payment__isnull=False
+        ).aggregate(total=models.Sum('amount'))['total'] or Decimal('0.00')
         
-        expenses = queryset.filter(transaction_type='expense').aggregate(
-            total=models.Sum('amount')
-        )['total'] or Decimal('0.00')
+        refunds = queryset.filter(
+            account=LedgerLine.Account.CASH,
+            entry_type=LedgerLine.EntryType.CREDIT,
+            payment__isnull=False,
+            reversing=True
+        ).aggregate(total=models.Sum('amount'))['total'] or Decimal('0.00')
         
-        oem_payments = queryset.filter(transaction_type='oem_payment').aggregate(
-            total=models.Sum('amount')
-        )['total'] or Decimal('0.00')
+        oem_cash_out = queryset.filter(
+            account=LedgerLine.Account.CASH,
+            entry_type=LedgerLine.EntryType.CREDIT,
+            oem_payment__isnull=False
+        ).aggregate(total=models.Sum('amount'))['total'] or Decimal('0.00')
         
-        commission_payments = queryset.filter(transaction_type='commission_payment').aggregate(
-            total=models.Sum('amount')
-        )['total'] or Decimal('0.00')
+        expense_cash_out = queryset.filter(
+            account=LedgerLine.Account.CASH,
+            entry_type=LedgerLine.EntryType.CREDIT,
+            expense__isnull=False
+        ).aggregate(total=models.Sum('amount'))['total'] or Decimal('0.00')
         
-        refunds = queryset.filter(transaction_type='refund').aggregate(
-            total=models.Sum('amount')
-        )['total'] or Decimal('0.00')
-        
-        adjustments = queryset.filter(transaction_type='adjustment').aggregate(
-            total=models.Sum('amount')
-        )['total'] or Decimal('0.00')
-        
-        # Calculate profit/loss
-        total_income = income + refunds
-        total_expenses = expenses + oem_payments + commission_payments + adjustments
-        profit_loss = total_income - total_expenses
+        profit_loss = (payments_received - refunds) - (oem_cash_out + expense_cash_out)
         
         return Response({
             'university_id': university_id,
@@ -1042,40 +1045,20 @@ class PaymentLedgerViewSet(viewsets.ModelViewSet):
                 'end_date': end_date
             },
             'income': {
-                'payments_received': float(income),
+                'payments_received': float(payments_received),
                 'refunds': float(refunds),
-                'total': float(total_income)
+                'total': float(payments_received - refunds)
             },
             'expenses': {
-                'operational_expenses': float(expenses),
-                'oem_payments': float(oem_payments),
-                'commission_payments': float(commission_payments),
-                'adjustments': float(adjustments),
-                'total': float(total_expenses)
+                'operational_expenses': float(expense_cash_out),
+                'oem_payments': float(oem_cash_out),
+                'commission_payments': 0.0,
+                'adjustments': 0.0,
+                'total': float(oem_cash_out + expense_cash_out)
             },
             'profit_loss': float(profit_loss),
             'transaction_count': queryset.count()
         })
-    
-    @action(detail=False, methods=['post'])
-    def recalculate_balances(self, request):
-        """Recalculate running balances for all or specific university"""
-        university_id = request.data.get('university_id')
-        
-        try:
-            updated_count = PaymentLedger.recalculate_running_balances(university_id=university_id)
-            
-            return Response({
-                'success': True,
-                'message': f'Successfully recalculated {updated_count} ledger entries',
-                'university_id': university_id,
-                'updated_count': updated_count
-            })
-        except Exception as e:
-            return Response(
-                {'error': f'Failed to recalculate balances: {str(e)}'}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
 
 class ContractFileViewSet(viewsets.ModelViewSet):
     queryset = ContractFile.objects.all()
