@@ -32,7 +32,7 @@ from .models import (
 from .serializers import (
     OEMSerializer, ProgramSerializer, UniversitySerializer, StreamSerializer,
     ContractSerializer, ContractProgramSerializer, BatchSerializer, BillingSerializer,
-    PaymentSerializer, LedgerLineSerializer, ContractFileSerializer, TaxRateSerializer, RegisterSerializer,
+    PaymentSerializer, LedgerLineSerializer, LedgerTransactionSerializer, ContractFileSerializer, TaxRateSerializer, RegisterSerializer,
     UserSerializer, CustomTokenObtainPairSerializer, InvoiceSerializer, DashboardBillingSerializer,
     DashboardInvoiceSerializer, DashboardPaymentSerializer, ChannelPartnerSerializer,
     ChannelPartnerProgramSerializer, ChannelPartnerStudentSerializer, StudentSerializer,
@@ -1059,6 +1059,109 @@ class PaymentLedgerViewSet(viewsets.ModelViewSet):
             'profit_loss': float(profit_loss),
             'transaction_count': queryset.count()
         })
+
+    @action(detail=False, methods=['get'])
+    def transactions(self, request):
+        """Return grouped, transaction-centric ledger entries"""
+        queryset = self.get_queryset()
+        transactions = self._build_transactions(queryset)
+
+        page = int(request.query_params.get('page', 1))
+        page_size = self.paginator.page_size if self.paginator else 10
+        total = len(transactions)
+        start = max(page - 1, 0) * page_size
+        end = start + page_size
+        serializer = LedgerTransactionSerializer(transactions[start:end], many=True)
+
+        return Response({
+            'count': total,
+            'results': serializer.data
+        })
+
+    def _build_transactions(self, queryset):
+        """Group ledger lines by their source (payment/oem_payment/expense)."""
+        from collections import OrderedDict
+        transactions = OrderedDict()
+
+        grouped_queryset = queryset.order_by('entry_date', 'id')
+
+        for entry in grouped_queryset:
+            source_type, source_id = self._identify_source(entry)
+            key = f"{source_type}:{source_id}" if source_id else f"line:{entry.id}"
+            if key not in transactions:
+                transactions[key] = {
+                    'id': key,
+                    'source_type': source_type,
+                    'source_id': source_id,
+                    'date': entry.entry_date,
+                    'description': entry.memo or self._fallback_description(entry),
+                    'memo': entry.memo,
+                    'university': entry.university_id,
+                    'university_name': entry.university.name if entry.university else None,
+                    'cash_delta': Decimal('0'),
+                    'accounts_receivable_delta': Decimal('0'),
+                    'oem_payable_delta': Decimal('0'),
+                'references': set(filter(None, [
+                    entry.payment.transaction_reference if entry.payment else None,
+                    entry.external_reference
+                ])),
+                }
+
+            tx = transactions[key]
+            if entry.entry_date < tx['date']:
+                tx['date'] = entry.entry_date
+
+            delta = entry.amount if entry.entry_type == LedgerLine.EntryType.DEBIT else -entry.amount
+
+            if entry.account == LedgerLine.Account.CASH:
+                tx['cash_delta'] += delta
+            elif entry.account == LedgerLine.Account.ACCOUNTS_RECEIVABLE:
+                tx['accounts_receivable_delta'] += delta
+            elif entry.account == LedgerLine.Account.OEM_PAYABLE:
+                tx['oem_payable_delta'] += delta
+
+            reference = entry.payment.transaction_reference if entry.payment else entry.external_reference
+            if reference:
+                tx['references'].add(reference)
+
+        results = []
+        for tx in transactions.values():
+            cash_delta = tx.pop('cash_delta')
+            cash_in = cash_delta if cash_delta > 0 else Decimal('0')
+            cash_out = -cash_delta if cash_delta < 0 else Decimal('0')
+            results.append({
+                **tx,
+                'cash_in': cash_in,
+                'cash_out': cash_out,
+                'net_cash': cash_delta,
+                'accounts_receivable_delta': tx['accounts_receivable_delta'],
+                'oem_payable_delta': tx['oem_payable_delta'],
+                'references': sorted(tx['references']),
+            })
+
+        return sorted(results, key=lambda item: item['date'], reverse=True)
+
+    @staticmethod
+    def _identify_source(entry):
+        if entry.payment_id:
+            return 'payment', entry.payment_id
+        if entry.oem_payment_id:
+            return 'oem_payment', entry.oem_payment_id
+        if entry.expense_id:
+            return 'expense', entry.expense_id
+        if entry.invoice_id:
+            return 'invoice', entry.invoice_id
+        return 'ledger_line', entry.id
+
+    @staticmethod
+    def _fallback_description(entry):
+        if entry.payment:
+            return f"Payment {entry.payment.name}"
+        if entry.oem_payment:
+            return f"OEM Payment {entry.oem_payment.id}"
+        if entry.expense:
+            return f"Expense {entry.expense.id}"
+        return f"Ledger entry {entry.id}"
 
 class ContractFileViewSet(viewsets.ModelViewSet):
     queryset = ContractFile.objects.all()

@@ -299,6 +299,23 @@ class LedgerLineSerializer(serializers.ModelSerializer):
         """Get payment reference safely"""
         return obj.payment.transaction_reference if obj.payment else obj.external_reference
 
+
+class LedgerTransactionSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    source_type = serializers.CharField()
+    source_id = serializers.IntegerField(allow_null=True)
+    date = serializers.DateField()
+    description = serializers.CharField()
+    memo = serializers.CharField(allow_null=True)
+    university = serializers.IntegerField(allow_null=True)
+    university_name = serializers.CharField(allow_null=True)
+    cash_in = serializers.DecimalField(max_digits=12, decimal_places=2)
+    cash_out = serializers.DecimalField(max_digits=12, decimal_places=2)
+    net_cash = serializers.DecimalField(max_digits=12, decimal_places=2)
+    accounts_receivable_delta = serializers.DecimalField(max_digits=12, decimal_places=2)
+    oem_payable_delta = serializers.DecimalField(max_digits=12, decimal_places=2)
+    references = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+
 class PaymentSerializer(serializers.ModelSerializer):
     documents = PaymentDocumentSerializer(many=True, read_only=True)
     invoice_details = serializers.SerializerMethodField()
